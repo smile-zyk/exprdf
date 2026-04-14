@@ -11,7 +11,8 @@
                 "CMAKE_TOOLCHAIN_FILE": {
                     "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
                     "type": "FILEPATH"
-                }
+                },
+                "Qt5_DIR" : "$env{Qt5_PREFIX_PATH}/lib/cmake/Qt5"
             },
             "binaryDir": "build"
         },

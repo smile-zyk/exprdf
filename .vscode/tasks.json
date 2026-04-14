@@ -1,0 +1,125 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run C++ DataFrame Test",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run Python DataFrame Test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python DataFrame Test (retry)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python DataFrame Test (unified API)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python Test (dot access)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run C++ Test (unit)",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run Python Test (unit)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run all tests",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe && python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run all tests",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe; python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run C++ test",
+			"type": "shell",
+			"command": "& c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run C++ DataFrame test",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run Python test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run C++ test",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run C++ test (rebuild)",
+			"type": "shell",
+			"command": "c:\\dev\\cpp_cmake_template\\build\\Debug\\test_dataframe.exe"
+		},
+		{
+			"label": "Run Python DataFrame Test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (quantity rename)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (bracket+dot access)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (bracket+dot access v2)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (final)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (final v2)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test (final v3)",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		},
+		{
+			"label": "Run Python test",
+			"type": "shell",
+			"command": "python c:\\dev\\cpp_cmake_template\\test_pybind.py"
+		}
+	]
+}

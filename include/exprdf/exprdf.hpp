@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_map>
 #include <complex>
+#include <cmath>
 #include <stdexcept>
 #include <sstream>
 #include <algorithm>
@@ -41,6 +42,27 @@ template <> struct DTypeTag<int>                    { static const DType value =
 template <> struct DTypeTag<double>                 { static const DType value = DType::Double; };
 template <> struct DTypeTag<std::string>            { static const DType value = DType::String; };
 template <> struct DTypeTag<std::complex<double>>   { static const DType value = DType::Complex; };
+
+// Approximate equality for floating-point comparisons
+inline bool approx_equal(double a, double b, double eps = 1e-12) {
+    double diff = std::abs(a - b);
+    if (diff <= eps) return true;
+    return diff <= eps * std::max(std::abs(a), std::abs(b));
+}
+
+inline bool approx_equal(const std::complex<double>& a,
+                         const std::complex<double>& b, double eps = 1e-12) {
+    return approx_equal(a.real(), b.real(), eps) &&
+           approx_equal(a.imag(), b.imag(), eps);
+}
+
+// Type-aware equality: approx for floating-point, exact for others
+template <typename T>
+inline bool values_equal(const T& a, const T& b) { return a == b; }
+template <>
+inline bool values_equal<double>(const double& a, const double& b) { return approx_equal(a, b); }
+template <>
+inline bool values_equal<std::complex<double>>(const std::complex<double>& a, const std::complex<double>& b) { return approx_equal(a, b); }
 
 // ============================================================
 // Column — tagged union of 4 vector types
@@ -213,9 +235,12 @@ public:
                         c.ints_.push_back(v);
                 break;
             case DType::Double:
-                for (auto& v : doubles_)
-                    if (std::find(c.doubles_.begin(), c.doubles_.end(), v) == c.doubles_.end())
-                        c.doubles_.push_back(v);
+                for (auto& v : doubles_) {
+                    bool found = false;
+                    for (auto& u : c.doubles_)
+                        if (approx_equal(u, v)) { found = true; break; }
+                    if (!found) c.doubles_.push_back(v);
+                }
                 break;
             case DType::String:
                 for (auto& v : strings_)
@@ -223,9 +248,12 @@ public:
                         c.strings_.push_back(v);
                 break;
             case DType::Complex:
-                for (auto& v : complexes_)
-                    if (std::find(c.complexes_.begin(), c.complexes_.end(), v) == c.complexes_.end())
-                        c.complexes_.push_back(v);
+                for (auto& v : complexes_) {
+                    bool found = false;
+                    for (auto& u : c.complexes_)
+                        if (approx_equal(u, v)) { found = true; break; }
+                    if (!found) c.complexes_.push_back(v);
+                }
                 break;
         }
         return c;
@@ -236,9 +264,9 @@ public:
         if (tag != other.tag) return false;
         switch (tag) {
             case DType::Int:     return ints_[row_a] == other.ints_[row_b];
-            case DType::Double:  return doubles_[row_a] == other.doubles_[row_b];
+            case DType::Double:  return approx_equal(doubles_[row_a], other.doubles_[row_b]);
             case DType::String:  return strings_[row_a] == other.strings_[row_b];
-            case DType::Complex: return complexes_[row_a] == other.complexes_[row_b];
+            case DType::Complex: return approx_equal(complexes_[row_a], other.complexes_[row_b]);
         }
         return false;
     }
@@ -579,6 +607,8 @@ public:
         if (col_order_.size() > index_levels_.size())
             throw std::invalid_argument(
                 "Cannot add index after dependent columns have been added");
+        if (make_column<T>(levels).extract_unique().size() != levels.size())
+            throw std::invalid_argument("Index '" + name + "' has duplicate levels");
 
         std::size_t new_n = levels.size();
         std::size_t old_rows = num_rows();
@@ -675,7 +705,8 @@ public:
         if (levels.tag != DTypeTag<T>::value)
             throw std::invalid_argument("Type mismatch for index '" + index_name + "'");
         const auto& vec = levels.as<T>();
-        auto it = std::find(vec.begin(), vec.end(), value);
+        auto it = std::find_if(vec.begin(), vec.end(),
+            [&value](const T& v) { return values_equal(v, value); });
         if (it == vec.end())
             throw std::invalid_argument("Value not found in index '" + index_name + "'");
         return static_cast<std::size_t>(it - vec.begin());

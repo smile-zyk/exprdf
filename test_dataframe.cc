@@ -3,6 +3,8 @@
 #include <complex>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <cstdio>
 #include <exprdf/exprdf.hpp>
 
 int main() {
@@ -801,6 +803,83 @@ int main() {
         // rename same name is no-op
         s->rename("result", "result");
         assert(s->has_column("result"));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 37: to_csv basic ===
+    std::cout << "\n=== Test 37: to_csv basic ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("id", {1, 2, 3});
+        df.add_column<double>("value", {1.1, 2.2, 3.3});
+        df.add_column<std::string>("name", {"Alice", "Bob", "Charlie"});
+        std::string csv = df.to_csv();
+        // Check header
+        assert(csv.find("id,value,name\n") == 0);
+        // Check a data row
+        assert(csv.find("1,1.1,Alice\n") != std::string::npos);
+        assert(csv.find("3,3.3,Charlie\n") != std::string::npos);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 38: to_csv with special characters ===
+    std::cout << "\n=== Test 38: to_csv escape ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<std::string>("text", {"hello", "has,comma", "has\"quote", "has\nnewline"});
+        std::string csv = df.to_csv();
+        assert(csv.find("\"has,comma\"") != std::string::npos);
+        assert(csv.find("\"has\"\"quote\"") != std::string::npos);
+        assert(csv.find("\"has\nnewline\"") != std::string::npos);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 39: to_csv custom delimiter ===
+    std::cout << "\n=== Test 39: to_csv custom delimiter ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("a", {1, 2});
+        df.add_column<int>("b", {3, 4});
+        std::string csv = df.to_csv('\t');
+        assert(csv.find("a\tb\n") == 0);
+        assert(csv.find("1\t3\n") != std::string::npos);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 40: save_csv ===
+    std::cout << "\n=== Test 40: save_csv ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("x", {10, 20});
+        df.add_column<double>("y", {1.5, 2.5});
+        df.save_csv("test_output.csv");
+        // Read back and verify
+        std::ifstream ifs("test_output.csv");
+        assert(ifs.is_open());
+        std::string content((std::istreambuf_iterator<char>(ifs)),
+                            std::istreambuf_iterator<char>());
+        assert(content == df.to_csv());
+        ifs.close();
+        std::remove("test_output.csv");
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 41: to_csv with complex ===
+    std::cout << "\n=== Test 41: to_csv complex ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<std::complex<double>>("z", {{1.0, 2.0}, {-1.0, -0.5}});
+        std::string csv = df.to_csv();
+        assert(csv.find("z\n") == 0);
+        assert(csv.find("(1+2j)") != std::string::npos);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 42: to_csv empty DataFrame ===
+    std::cout << "\n=== Test 42: to_csv empty ===" << std::endl;
+    {
+        DataFrame df;
+        assert(df.to_csv().empty());
     }
     std::cout << "PASSED" << std::endl;
 

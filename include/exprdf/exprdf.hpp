@@ -18,6 +18,7 @@
 #include <memory>
 #include <cassert>
 #include <iomanip>
+#include <fstream>
 
 namespace exprdf {
 
@@ -1011,6 +1012,39 @@ public:
     const std::string& name() const { return name_; }
     void set_name(const std::string& n) { name_ = n; }
 
+    // --- CSV export ---
+
+    std::string to_csv(char delimiter = ',') const {
+        if (columns_.empty()) return "";
+        std::ostringstream ss;
+
+        // Header row
+        for (std::size_t c = 0; c < col_order_.size(); ++c) {
+            if (c > 0) ss << delimiter;
+            ss << escape_csv_field(col_order_[c]);
+        }
+        ss << "\n";
+
+        // Data rows
+        std::size_t nrows = num_rows();
+        for (std::size_t r = 0; r < nrows; ++r) {
+            for (std::size_t c = 0; c < col_order_.size(); ++c) {
+                if (c > 0) ss << delimiter;
+                auto it = columns_.find(col_order_[c]);
+                ss << escape_csv_field(it->second.to_string(r));
+            }
+            ss << "\n";
+        }
+        return ss.str();
+    }
+
+    void save_csv(const std::string& filename, char delimiter = ',') const {
+        std::ofstream ofs(filename);
+        if (!ofs.is_open())
+            throw std::runtime_error("Cannot open file '" + filename + "' for writing");
+        ofs << to_csv(delimiter);
+    }
+
     // --- Rename ---
 
     DataFrame& rename(const std::string& old_name, const std::string& new_name) {
@@ -1055,6 +1089,17 @@ private:
         std::string name;
         Column levels;
     };
+
+    static std::string escape_csv_field(const std::string& field) {
+        if (field.find_first_of(",\"\r\n") == std::string::npos) return field;
+        std::string escaped = "\"";
+        for (char c : field) {
+            if (c == '"') escaped += "\"\"";
+            else escaped += c;
+        }
+        escaped += '"';
+        return escaped;
+    }
 
     std::vector<std::string> col_order_;
     std::unordered_map<std::string, Column> columns_;

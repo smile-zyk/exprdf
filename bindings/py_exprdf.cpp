@@ -231,6 +231,11 @@ PYBIND11_MODULE(exprdf, m) {
             return self;
         }, py::arg("new_name"), "Rename the last column (returns self)")
 
+        .def("to_csv", &exprdf::DataFrame::to_csv, py::arg("delimiter") = ',',
+             "Return CSV string")
+        .def("save_csv", &exprdf::DataFrame::save_csv, py::arg("filename"), py::arg("delimiter") = ',',
+             "Write CSV to file")
+
         .def("__repr__", [](const exprdf::DataFrame& self) {
             return self.to_string();
         })

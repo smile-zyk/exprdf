@@ -474,4 +474,39 @@ ret = df37.rename("x", "y")
 assert ret is df37
 print("PASSED")
 
+# === Python Test 35: to_csv basic ===
+print("\n=== Python Test 35: to_csv basic ===")
+df_csv = pdf.DataFrame()
+df_csv.add_column("id", [1, 2, 3])
+df_csv.add_column("value", [1.1, 2.2, 3.3])
+df_csv.add_column("name", ["Alice", "Bob", "Charlie"])
+csv = df_csv.to_csv()
+assert csv.startswith("id,value,name\n")
+assert "1,1.1,Alice\n" in csv
+assert "3,3.3,Charlie\n" in csv
+print("PASSED")
+
+# === Python Test 36: to_csv custom delimiter ===
+print("\n=== Python Test 36: to_csv custom delimiter ===")
+csv_tab = df_csv.to_csv('\t')
+assert csv_tab.startswith("id\tvalue\tname\n")
+assert "1\t1.1\tAlice\n" in csv_tab
+print("PASSED")
+
+# === Python Test 37: save_csv ===
+print("\n=== Python Test 37: save_csv ===")
+import os
+df_csv.save_csv("test_output_py.csv")
+with open("test_output_py.csv", "r") as f:
+    content = f.read()
+assert content == df_csv.to_csv()
+os.remove("test_output_py.csv")
+print("PASSED")
+
+# === Python Test 38: to_csv empty ===
+print("\n=== Python Test 38: to_csv empty ===")
+df_empty = pdf.DataFrame()
+assert df_empty.to_csv() == ""
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

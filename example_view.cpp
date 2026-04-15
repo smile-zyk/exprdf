@@ -17,9 +17,9 @@ int main(int argc, char* argv[])
     for (int i = 0; i < 20; ++i) real_vals.push_back(0.05 + 0.05 * i);
     for (int i = 0; i <= 500; ++i) freq_vals.push_back(i * 0.02); // 0~10 GHz, step 20 MHz
 
-    df->add_index<double>("imag_index", imag_vals);
-    df->add_index<double>("real_index", real_vals);
-    df->add_index<double>("freq", freq_vals);
+    df->add_uniform_index<double>("imag_index", imag_vals);
+    df->add_uniform_index<double>("real_index", real_vals);
+    df->add_uniform_index<double>("freq", freq_vals);
     df->set_column_quantity("freq", unit_format::kFrequency);
 
     // Generate complex Pdel data: 200,400 rows

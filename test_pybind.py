@@ -177,10 +177,10 @@ except (RuntimeError, ValueError):
     pass
 print("PASSED")
 
-print("\n=== Python Test 15: Multi-index add_index ===")
+print("\n=== Python Test 15: Multi-index add_uniform_index ===")
 mi = pdf.DataFrame()
-mi.add_index("a", [1, 2])
-mi.add_index("b", [10, 20, 30])
+mi.add_uniform_index("a", [1, 2])
+mi.add_uniform_index("b", [10, 20, 30])
 assert mi.num_rows() == 6
 assert mi.num_columns() == 2
 assert mi.num_indices() == 2
@@ -226,9 +226,14 @@ assert sub4.num_rows() == 1
 assert sub4.at("v", 0) == 6.0
 print("PASSED")
 
-print("\n=== Python Test 18: Multi-index get_index_levels ===")
-assert mi.get_index_levels(0) == [1, 2]
-assert mi.get_index_levels("b") == [10, 20, 30]
+print("\n=== Python Test 18: Multi-index get_index_dim ===")
+dim_a = mi.get_index_dim(0)
+assert dim_a["levels"] == [1, 2]
+assert dim_a["dim_size"] == 2
+assert dim_a["kind"] == "uniform"
+dim_b = mi.get_index_dim("b")
+assert dim_b["levels"] == [10, 20, 30]
+assert dim_b["dim_size"] == 3
 print("PASSED")
 
 print("\n=== Python Test 19: Multi-index copy preserves index ===")
@@ -240,9 +245,9 @@ print("PASSED")
 
 print("\n=== Python Test 20: 3D multi-index ===")
 mi3 = pdf.DataFrame()
-mi3.add_index("a", [1, 2])
-mi3.add_index("b", [10, 20, 30])
-mi3.add_index("c", [100, 200])
+mi3.add_uniform_index("a", [1, 2])
+mi3.add_uniform_index("b", [10, 20, 30])
+mi3.add_uniform_index("c", [100, 200])
 assert mi3.num_rows() == 12
 mi3.add_column("v", list(range(1, 13)))
 
@@ -283,10 +288,10 @@ assert sub2.at("v", 0) == 2.0
 print("PASSED")
 
 print("\n=== Python Test 22: set_index validation ===")
-# Non-Cartesian data
+# Invalid grouped layout
 df_bad = pdf.DataFrame()
-df_bad.add_column("a", [1, 1, 2, 2])
-df_bad.add_column("b", [10, 20, 10, 30])
+df_bad.add_column("a", [1, 1, 1, 2])
+df_bad.add_column("b", [10, 20, 30, 10])
 df_bad.add_column("v", [1, 2, 3, 4])
 try:
     df_bad.set_index("a", "b")
@@ -365,8 +370,8 @@ print("PASSED")
 
 print("\n=== Python Test 28: independent_names alias ===")
 df30 = pdf.DataFrame()
-df30.add_index("freq", [1, 2, 3])
-df30.add_index("port", ["p1", "p2"])
+df30.add_uniform_index("freq", [1, 2, 3])
+df30.add_uniform_index("port", ["p1", "p2"])
 df30.add_column("val", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 assert df30.independent_names() == df30.index_names()
 assert df30.independent_names() == ["freq", "port"]
@@ -384,8 +389,8 @@ print("PASSED")
 
 print("\n=== Python Test 30: sub dependent column ===")
 df32 = pdf.DataFrame()
-df32.add_index("a", [1, 2])
-df32.add_index("b", [10, 20, 30])
+df32.add_uniform_index("a", [1, 2])
+df32.add_uniform_index("b", [10, 20, 30])
 df32.add_column("x", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 df32.add_column("y", [7.0, 8.0, 9.0, 10.0, 11.0, 12.0])
 df32.type = "sparam"
@@ -401,9 +406,9 @@ print("PASSED")
 
 print("\n=== Python Test 31: sub independent column ===")
 df33 = pdf.DataFrame()
-df33.add_index("a", [1, 2])
-df33.add_index("b", [10, 20, 30])
-df33.add_index("c", [100, 200])
+df33.add_uniform_index("a", [1, 2])
+df33.add_uniform_index("b", [10, 20, 30])
+df33.add_uniform_index("c", [100, 200])
 df33.add_column("v", [0.0] * 12)
 df33.type = "zparam"
 s33 = df33.sub("b")
@@ -417,7 +422,7 @@ print("PASSED")
 
 print("\n=== Python Test 32: path/type/name metadata ===")
 df34 = pdf.DataFrame()
-df34.add_index("f", [1, 2])
+df34.add_uniform_index("f", [1, 2])
 df34.add_column("v", [10.0, 20.0])
 assert df34.path == ""
 assert df34.type == ""
@@ -458,8 +463,8 @@ print("PASSED")
 
 print("\n=== Python Test 34: rename_last (chain with sub) ===")
 df36 = pdf.DataFrame()
-df36.add_index("a", [1, 2])
-df36.add_index("b", [10, 20, 30])
+df36.add_uniform_index("a", [1, 2])
+df36.add_uniform_index("b", [10, 20, 30])
 df36.add_column("t", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 # chain: sub then rename_last
 result = df36.sub("t").rename_last("my_var")
@@ -507,6 +512,153 @@ print("PASSED")
 print("\n=== Python Test 38: to_csv empty ===")
 df_empty = pdf.DataFrame()
 assert df_empty.to_csv() == ""
+print("PASSED")
+
+# === Python Test 39: add_varying_index basic ===
+print("\n=== Python Test 39: add_varying_index basic ===")
+df_var = pdf.DataFrame()
+df_var.add_uniform_index("bias", [1, 2])
+df_var.add_varying_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "GHz")
+assert df_var.num_rows() == 6
+assert df_var.num_indices() == 2
+dim_freq = df_var.get_index_dim("freq")
+assert dim_freq["name"] == "freq"
+assert dim_freq["kind"] == "varying"
+assert dim_freq["group_size"] == 3
+df_var.add_column("S11", [-10.0, -20.0, -30.0, -15.0, -25.0, -35.0])
+print(df_var)
+print("PASSED")
+
+# === Python Test 40: add_varying_index loc ===
+print("\n=== Python Test 40: add_varying_index loc ===")
+sub_var = df_var.loc(1)  # fix freq at index 1
+assert sub_var.num_rows() == 2
+s11 = sub_var["S11"]
+assert abs(s11[0] - (-20.0)) < 1e-12
+assert abs(s11[1] - (-25.0)) < 1e-12
+print("PASSED")
+
+# === Python Test 41: first index cannot be varying ===
+print("\n=== Python Test 41: first index cannot be varying ===")
+df_first = pdf.DataFrame()
+caught = False
+try:
+    df_first.add_varying_index("freq", [1.0, 2.0], 2)
+except Exception:
+    caught = True
+assert caught
+print("PASSED")
+
+# === Python Test 42: add_varying_index_groups ===
+print("\n=== Python Test 42: add_varying_index_groups ===")
+df_groups = pdf.DataFrame()
+df_groups.add_uniform_index("bias", [1, 2])
+df_groups.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "GHz")
+assert df_groups.num_rows() == 6
+df_groups.add_uniform_index("port", ["S11", "S21"])
+assert df_groups.num_rows() == 12
+print("PASSED")
+
+# === Python Test 43: add_varying_index_groups validation ===
+print("\n=== Python Test 43: add_varying_index_groups validation ===")
+df_groups_bad = pdf.DataFrame()
+df_groups_bad.add_uniform_index("bias", [1, 2])
+caught = False
+try:
+    df_groups_bad.add_varying_index_groups("freq", [[1.0, 2.0, 3.0]])
+except Exception:
+    caught = True
+assert caught
+
+caught = False
+try:
+    df_groups_bad.add_varying_index_groups("freq", [[1.0, 2.0], [1.5]])
+except Exception:
+    caught = True
+assert caught
+print("PASSED")
+
+# === Python Test 44: set_index auto infer varying in middle ===
+print("\n=== Python Test 44: set_index auto infer varying ===")
+df_mix = pdf.DataFrame()
+df_mix.add_column("bias", [1,1,1,1,1,1,2,2,2,2,2,2])
+df_mix.add_column("freq", [1.0,1.0,2.0,2.0,3.0,3.0,1.5,1.5,2.5,2.5,3.5,3.5])
+df_mix.add_column("port", ["S11","S21","S11","S21","S11","S21",
+                            "S11","S21","S11","S21","S11","S21"])
+df_mix.add_column("S", [-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36])
+df_mix.set_index("bias", "freq", "port")
+
+d0 = df_mix.get_index_dim("bias")
+d1 = df_mix.get_index_dim("freq")
+d2 = df_mix.get_index_dim("port")
+assert d0["kind"] == "uniform" and d0["dim_size"] == 2
+assert d1["kind"] == "varying" and d1["group_size"] == 3
+assert d2["kind"] == "uniform" and d2["dim_size"] == 2
+print("PASSED")
+
+# === Python Test 45: set_index keeps unordered uniform behavior ===
+print("\n=== Python Test 45: set_index unordered uniform ===")
+df_unordered = pdf.DataFrame()
+df_unordered.add_column("a", [2,2,2,1,1,1])
+df_unordered.add_column("b", [30,10,20,30,10,20])
+df_unordered.add_column("v", [6,4,5,3,1,2])
+df_unordered.set_index("a", "b")
+assert df_unordered["a"][0] == 2 and df_unordered["b"][0] == 30
+assert df_unordered["a"][5] == 1 and df_unordered["b"][5] == 20
+print("PASSED")
+
+# === Python Test 46: set_index infer two varying dims ===
+print("\n=== Python Test 46: set_index infer two varying dims ===")
+df_mix2 = pdf.DataFrame()
+df_mix2.add_column("bias", [1,1,1,1,2,2,2,2])
+df_mix2.add_column("freq", [1.0,1.0,2.0,2.0,1.5,1.5,2.5,2.5])
+df_mix2.add_column("port", ["S11","S21","S11","S21","S11","S21","S11","S21"])
+df_mix2.add_column("S", [-10,-11,-20,-21,-15,-16,-25,-26])
+df_mix2.set_index("bias", "freq", "port")
+assert df_mix2.get_index_dim("bias")["kind"] == "uniform"
+assert df_mix2.get_index_dim("freq")["kind"] == "varying"
+assert df_mix2.get_index_dim("freq")["group_size"] == 2
+assert df_mix2.get_index_dim("port")["kind"] == "uniform"
+print("PASSED")
+
+# === Python Test 47: add two varying plus inner uniform ===
+print("\n=== Python Test 47: add two varying + inner uniform ===")
+df_v2 = pdf.DataFrame()
+df_v2.add_uniform_index("bias", [1, 2])
+df_v2.add_varying_index_groups("freq", [[1.0, 2.0], [1.5, 2.5]])
+df_v2.add_varying_index("temp", [25,30,25,30,26,31,26,31], 2, "C")
+df_v2.add_uniform_index("port", ["S11", "S21"])
+assert df_v2.num_rows() == 16
+assert df_v2.get_index_dim("freq")["kind"] == "varying"
+assert df_v2.get_index_dim("temp")["kind"] == "varying"
+assert df_v2.get_index_dim("port")["kind"] == "uniform"
+print("PASSED")
+
+# === Python Test 48: set_index invalid mixed blocks ===
+print("\n=== Python Test 48: set_index invalid mixed blocks ===")
+df_bad2 = pdf.DataFrame()
+df_bad2.add_column("bias", [1,1,2,2])
+df_bad2.add_column("freq", [10,10,20,10])
+df_bad2.add_column("v", [1,2,3,4])
+caught = False
+try:
+    df_bad2.set_index("bias", "freq")
+except Exception:
+    caught = True
+assert caught
+print("PASSED")
+
+# === Python Test 49: reset then set_index infer mixed ===
+print("\n=== Python Test 49: reset then set_index infer mixed ===")
+df_reset = pdf.DataFrame()
+df_reset.add_uniform_index("bias", [1, 2])
+df_reset.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]])
+df_reset.add_uniform_index("port", ["S11", "S21"])
+df_reset.add_column("S", [-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36])
+df_reset.reset_index()
+df_reset.set_index("bias", "freq", "port")
+assert df_reset.get_index_dim("freq")["kind"] == "varying"
+assert df_reset.get_index_dim("freq")["group_size"] == 3
 print("PASSED")
 
 print("\n=== ALL PYTHON TESTS PASSED ===")

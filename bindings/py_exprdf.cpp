@@ -261,8 +261,8 @@ PYBIND11_MODULE(exprdf, m) {
 
         // --- Multi-index ---
 
-        // add_index: auto-detect type from Python list
-        .def("add_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& unit) {
+        // add_uniform_index: auto-detect type from Python list
+        .def("add_uniform_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& unit) {
             if (data.empty()) {
                 throw std::invalid_argument("Index levels cannot be empty");
             }
@@ -270,7 +270,7 @@ PYBIND11_MODULE(exprdf, m) {
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.add_index<std::string>(name, v, unit);
+                self.add_uniform_index<std::string>(name, v, unit);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false;
                 for (auto item : data) {
@@ -279,19 +279,119 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.add_index<double>(name, v, unit);
+                    self.add_uniform_index<double>(name, v, unit);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.add_index<int>(name, v, unit);
+                    self.add_uniform_index<int>(name, v, unit);
                 }
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.add_index<double>(name, v, unit);
+                self.add_uniform_index<double>(name, v, unit);
             }
         }, py::arg("name"), py::arg("data"), py::arg("unit") = "",
            "Add an independent (index) dimension with auto-detected type")
+
+        // add_varying_index: auto-detect type from Python list
+        .def("add_varying_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, std::size_t group_size, const std::string& unit) {
+            if (data.empty()) {
+                throw std::invalid_argument("Values cannot be empty");
+            }
+            py::object first = data[0];
+            if (py::isinstance<py::str>(first)) {
+                std::vector<std::string> v;
+                for (auto item : data) v.push_back(item.cast<std::string>());
+                self.add_varying_index<std::string>(name, v, group_size, unit);
+            } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
+                bool has_float = false;
+                for (auto item : data) {
+                    if (py::isinstance<py::float_>(item)) has_float = true;
+                }
+                if (has_float) {
+                    std::vector<double> v;
+                    for (auto item : data) v.push_back(item.cast<double>());
+                    self.add_varying_index<double>(name, v, group_size, unit);
+                } else {
+                    std::vector<int> v;
+                    for (auto item : data) v.push_back(item.cast<int>());
+                    self.add_varying_index<int>(name, v, group_size, unit);
+                }
+            } else {
+                std::vector<double> v;
+                for (auto item : data) v.push_back(item.cast<double>());
+                self.add_varying_index<double>(name, v, group_size, unit);
+            }
+        }, py::arg("name"), py::arg("data"), py::arg("group_size"), py::arg("unit") = "",
+           "Add a varying index dimension (values differ per outer-index group)")
+
+        // add_varying_index_groups: grouped input, each row-group provides one list
+        .def("add_varying_index_groups", [](exprdf::DataFrame& self, const std::string& name, py::list groups, const std::string& unit) {
+            if (groups.empty()) {
+                throw std::invalid_argument("groups cannot be empty");
+            }
+            py::object first_group_obj = groups[0];
+            if (!py::isinstance<py::list>(first_group_obj)) {
+                throw std::invalid_argument("groups must be a list of lists");
+            }
+            py::list first_group = first_group_obj.cast<py::list>();
+            if (first_group.empty()) {
+                throw std::invalid_argument("group_size cannot be zero");
+            }
+
+            py::object first = first_group[0];
+            if (py::isinstance<py::str>(first)) {
+                std::vector<std::vector<std::string>> vv;
+                for (auto g : groups) {
+                    py::list gl = g.cast<py::list>();
+                    std::vector<std::string> row;
+                    row.reserve(py::len(gl));
+                    for (auto item : gl) row.push_back(item.cast<std::string>());
+                    vv.push_back(std::move(row));
+                }
+                self.add_varying_index_groups<std::string>(name, vv, unit);
+            } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
+                bool has_float = false;
+                for (auto g : groups) {
+                    py::list gl = g.cast<py::list>();
+                    for (auto item : gl) {
+                        if (py::isinstance<py::float_>(item)) has_float = true;
+                    }
+                }
+                if (has_float) {
+                    std::vector<std::vector<double>> vv;
+                    for (auto g : groups) {
+                        py::list gl = g.cast<py::list>();
+                        std::vector<double> row;
+                        row.reserve(py::len(gl));
+                        for (auto item : gl) row.push_back(item.cast<double>());
+                        vv.push_back(std::move(row));
+                    }
+                    self.add_varying_index_groups<double>(name, vv, unit);
+                } else {
+                    std::vector<std::vector<int>> vv;
+                    for (auto g : groups) {
+                        py::list gl = g.cast<py::list>();
+                        std::vector<int> row;
+                        row.reserve(py::len(gl));
+                        for (auto item : gl) row.push_back(item.cast<int>());
+                        vv.push_back(std::move(row));
+                    }
+                    self.add_varying_index_groups<int>(name, vv, unit);
+                }
+            } else {
+                std::vector<std::vector<double>> vv;
+                for (auto g : groups) {
+                    py::list gl = g.cast<py::list>();
+                    std::vector<double> row;
+                    row.reserve(py::len(gl));
+                    for (auto item : gl) row.push_back(item.cast<double>());
+                    vv.push_back(std::move(row));
+                }
+                self.add_varying_index_groups<double>(name, vv, unit);
+            }
+        }, py::arg("name"), py::arg("groups"), py::arg("unit") = "",
+           "Add a varying index dimension from per-group value lists")
 
         .def("num_indices", &exprdf::DataFrame::num_indices,
              "Number of independent (index) dimensions")
@@ -320,26 +420,40 @@ PYBIND11_MODULE(exprdf, m) {
         .def("reset_index", &exprdf::DataFrame::reset_index,
              "Demote all index dimensions back to regular columns")
 
-        .def("get_index_levels", [](const exprdf::DataFrame& self, std::size_t dim) -> py::object {
-            const exprdf::Column& col = self.get_index_levels(dim);
-            switch (col.tag) {
-                case exprdf::DType::Int:     return py::cast(col.as<int>());
-                case exprdf::DType::Double:  return py::cast(col.as<double>());
-                case exprdf::DType::String:  return py::cast(col.as<std::string>());
-                case exprdf::DType::Complex: return py::cast(col.as<std::complex<double>>());
+        .def("get_index_dim", [](const exprdf::DataFrame& self, std::size_t dim) -> py::dict {
+            const exprdf::IndexDim& id = self.get_index_dim(dim);
+            py::dict d;
+            d["name"] = id.name;
+            d["kind"] = id.is_uniform() ? "uniform" : "varying";
+            d["group_size"] = id.group_size;
+            d["dim_size"] = id.dim_size();
+            if (id.is_uniform()) {
+                switch (id.levels.tag) {
+                    case exprdf::DType::Int:     d["levels"] = py::cast(id.levels.as<int>()); break;
+                    case exprdf::DType::Double:  d["levels"] = py::cast(id.levels.as<double>()); break;
+                    case exprdf::DType::String:  d["levels"] = py::cast(id.levels.as<std::string>()); break;
+                    case exprdf::DType::Complex: d["levels"] = py::cast(id.levels.as<std::complex<double>>()); break;
+                }
             }
-            throw std::runtime_error("Unknown dtype");
-        }, py::arg("dim"), "Get unique level values for an index dimension (by index)")
-        .def("get_index_levels", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
-            const exprdf::Column& col = self.get_index_levels(name);
-            switch (col.tag) {
-                case exprdf::DType::Int:     return py::cast(col.as<int>());
-                case exprdf::DType::Double:  return py::cast(col.as<double>());
-                case exprdf::DType::String:  return py::cast(col.as<std::string>());
-                case exprdf::DType::Complex: return py::cast(col.as<std::complex<double>>());
+            return d;
+        }, py::arg("dim"), "Get index dimension info (by index)")
+        .def("get_index_dim", [](const exprdf::DataFrame& self, const std::string& name) -> py::dict {
+            const exprdf::IndexDim& id = self.get_index_dim(name);
+            py::dict d;
+            d["name"] = id.name;
+            d["kind"] = id.is_uniform() ? "uniform" : "varying";
+            d["group_size"] = id.group_size;
+            d["dim_size"] = id.dim_size();
+            if (id.is_uniform()) {
+                switch (id.levels.tag) {
+                    case exprdf::DType::Int:     d["levels"] = py::cast(id.levels.as<int>()); break;
+                    case exprdf::DType::Double:  d["levels"] = py::cast(id.levels.as<double>()); break;
+                    case exprdf::DType::String:  d["levels"] = py::cast(id.levels.as<std::string>()); break;
+                    case exprdf::DType::Complex: d["levels"] = py::cast(id.levels.as<std::complex<double>>()); break;
+                }
             }
-            throw std::runtime_error("Unknown dtype");
-        }, py::arg("name"), "Get unique level values for an index dimension (by name)")
+            return d;
+        }, py::arg("name"), "Get index dimension info (by name)")
 
         .def("strides", &exprdf::DataFrame::strides,
              "Get strides for each index dimension")

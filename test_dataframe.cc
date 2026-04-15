@@ -213,12 +213,12 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 13: Multi-index — add_index & Cartesian product ===
-    std::cout << "\n=== Test 13: Multi-index add_index ===" << std::endl;
+    // === Test 13: Multi-index — add_uniform_index & Cartesian product ===
+    std::cout << "\n=== Test 13: Multi-index add_uniform_index ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {1, 2});
-        mi.add_index<int>("b", {10, 20, 30});
+        mi.add_uniform_index<int>("a", {1, 2});
+        mi.add_uniform_index<int>("b", {10, 20, 30});
         assert(mi.num_rows() == 6);
         assert(mi.num_columns() == 2);
         assert(mi.num_indices() == 2);
@@ -248,8 +248,8 @@ int main() {
     std::cout << "\n=== Test 14: strides & flat_index ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {1, 2});
-        mi.add_index<int>("b", {10, 20, 30});
+        mi.add_uniform_index<int>("a", {1, 2});
+        mi.add_uniform_index<int>("b", {10, 20, 30});
         mi.add_column<double>("v", {1, 2, 3, 4, 5, 6});
 
         auto s = mi.strides();
@@ -269,8 +269,8 @@ int main() {
     std::cout << "\n=== Test 15: loc ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {1, 2});
-        mi.add_index<int>("b", {10, 20, 30});
+        mi.add_uniform_index<int>("a", {1, 2});
+        mi.add_uniform_index<int>("b", {10, 20, 30});
         mi.add_column<double>("v", {1, 2, 3, 4, 5, 6});
 
         // loc({0}): fix b=10 (innermost at index 0), a varies → 2 rows
@@ -316,40 +316,22 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 17: Multi-index — find_level ===
-    std::cout << "\n=== Test 17: find_level ===" << std::endl;
+    // === Test 17: Multi-index — get_index_dim ===
+    std::cout << "\n=== Test 17: get_index_dim ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {100, 200});
-        mi.add_index<int>("b", {10, 20, 30});
-        mi.add_column<double>("v", {1, 2, 3, 4, 5, 6});
+        mi.add_uniform_index<int>("a", {1, 2});
+        mi.add_uniform_index<std::string>("b", {"x", "y", "z"});
 
-        assert(mi.find_level<int>("a", 100) == 0);
-        assert(mi.find_level<int>("a", 200) == 1);
-        assert(mi.find_level<int>("b", 20) == 1);
-        assert(mi.find_level<int>("b", 30) == 2);
+        auto& dim_a = mi.get_index_dim(0);
+        assert(dim_a.levels.tag == DType::Int);
+        assert(dim_a.dim_size() == 2);
+        assert(dim_a.is_uniform());
 
-        // Value-based loc via find_level
-        auto row = mi.loc({mi.find_level<int>("a", 200), mi.find_level<int>("b", 30)});
-        assert(row->num_rows() == 1);
-        assert(row->at<double>("v", 0) == 6.0);
-    }
-    std::cout << "PASSED" << std::endl;
-
-    // === Test 18: Multi-index — get_index_levels ===
-    std::cout << "\n=== Test 18: get_index_levels ===" << std::endl;
-    {
-        DataFrame mi;
-        mi.add_index<int>("a", {1, 2});
-        mi.add_index<std::string>("b", {"x", "y", "z"});
-
-        auto& lvl_a = mi.get_index_levels(0);
-        assert(lvl_a.tag == DType::Int);
-        assert(lvl_a.as<int>().size() == 2);
-
-        auto& lvl_b = mi.get_index_levels("b");
-        assert(lvl_b.tag == DType::String);
-        assert(lvl_b.as<std::string>()[1] == "y");
+        auto& dim_b = mi.get_index_dim("b");
+        assert(dim_b.levels.tag == DType::String);
+        assert(dim_b.levels.as<std::string>()[1] == "y");
+        assert(dim_b.dim_size() == 3);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -357,8 +339,8 @@ int main() {
     std::cout << "\n=== Test 19: copy preserves index ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {1, 2});
-        mi.add_index<int>("b", {10, 20});
+        mi.add_uniform_index<int>("a", {1, 2});
+        mi.add_uniform_index<int>("b", {10, 20});
         mi.add_column<double>("v", {1, 2, 3, 4});
 
         auto mi2 = mi.copy();
@@ -373,9 +355,9 @@ int main() {
     std::cout << "\n=== Test 20: 3D multi-index ===" << std::endl;
     {
         DataFrame mi;
-        mi.add_index<int>("a", {1, 2});       // 2
-        mi.add_index<int>("b", {10, 20, 30});  // 3
-        mi.add_index<int>("c", {100, 200});    // 2
+        mi.add_uniform_index<int>("a", {1, 2});       // 2
+        mi.add_uniform_index<int>("b", {10, 20, 30});  // 3
+        mi.add_uniform_index<int>("c", {100, 200});    // 2
         assert(mi.num_rows() == 12); // 2*3*2
 
         mi.add_column<double>("v", {1,2,3,4,5,6,7,8,9,10,11,12});
@@ -428,12 +410,12 @@ int main() {
         assert(df.column_names()[1] == "b");
         assert(df.column_names()[2] == "v");
 
-        // get_index_levels should work
-        auto& lvl_a = df.get_index_levels("a");
-        assert(lvl_a.as<int>().size() == 2);
-        assert(lvl_a.as<int>()[0] == 1 && lvl_a.as<int>()[1] == 2);
-        auto& lvl_b = df.get_index_levels("b");
-        assert(lvl_b.as<int>().size() == 3);
+        // get_index_dim should work
+        auto& dim_a = df.get_index_dim("a");
+        assert(dim_a.dim_size() == 2);
+        assert(dim_a.levels.as<int>()[0] == 1 && dim_a.levels.as<int>()[1] == 2);
+        auto& dim_b = df.get_index_dim("b");
+        assert(dim_b.dim_size() == 3);
 
         // loc should work after set_index
         auto sub = df.loc({0}); // fix b=10 (innermost)
@@ -450,10 +432,10 @@ int main() {
     // === Test 22: set_index — validation errors ===
     std::cout << "\n=== Test 22: set_index validation ===" << std::endl;
     {
-        // Non-Cartesian data should fail
+        // Invalid grouped layout should fail
         DataFrame df;
-        df.add_column<int>("a", {1, 1, 2, 2});
-        df.add_column<int>("b", {10, 20, 10, 30}); // not valid: b should be [10,20,10,20]
+        df.add_column<int>("a", {1, 1, 1, 2});
+        df.add_column<int>("b", {10, 20, 30, 10});
         df.add_column<double>("v", {1, 2, 3, 4});
         bool caught = false;
         try { df.set_index({"a", "b"}); }
@@ -554,10 +536,10 @@ int main() {
         assert(df.num_indices() == 2);
 
         // Unique levels (first-appearance): a=[2,1], b=[30,10,20]
-        auto& lvl_a = df.get_index_levels("a");
-        assert(lvl_a.as<int>()[0] == 2 && lvl_a.as<int>()[1] == 1);
-        auto& lvl_b = df.get_index_levels("b");
-        assert(lvl_b.as<int>()[0] == 30 && lvl_b.as<int>()[1] == 10 && lvl_b.as<int>()[2] == 20);
+        auto& dim_a = df.get_index_dim("a");
+        assert(dim_a.levels.as<int>()[0] == 2 && dim_a.levels.as<int>()[1] == 1);
+        auto& dim_b = df.get_index_dim("b");
+        assert(dim_b.levels.as<int>()[0] == 30 && dim_b.levels.as<int>()[1] == 10 && dim_b.levels.as<int>()[2] == 20);
 
         // After reorder, data should be in Cartesian order:
         //   (2,30)=6, (2,10)=4, (2,20)=5, (1,30)=3, (1,10)=1, (1,20)=2
@@ -645,8 +627,8 @@ int main() {
     std::cout << "\n=== Test 30: independent_names alias ==" << std::endl;
     {
         DataFrame df;
-        df.add_index<int>("freq", {1, 2, 3});
-        df.add_index<std::string>("port", {"p1", "p2"});
+        df.add_uniform_index<int>("freq", {1, 2, 3});
+        df.add_uniform_index<std::string>("port", {"p1", "p2"});
         df.add_column<double>("val", {1, 2, 3, 4, 5, 6});
         auto inames = df.independent_names();
         auto idx_names = df.index_names();
@@ -661,8 +643,8 @@ int main() {
     std::cout << "\n=== Test 31: sub dependent column ==" << std::endl;
     {
         DataFrame df;
-        df.add_index<int>("a", {1, 2});
-        df.add_index<int>("b", {10, 20, 30});
+        df.add_uniform_index<int>("a", {1, 2});
+        df.add_uniform_index<int>("b", {10, 20, 30});
         df.add_column<double>("x", {1, 2, 3, 4, 5, 6});
         df.add_column<double>("y", {7, 8, 9, 10, 11, 12});
         df.set_type("sparam");
@@ -683,9 +665,9 @@ int main() {
     std::cout << "\n=== Test 32: sub independent column ==" << std::endl;
     {
         DataFrame df;
-        df.add_index<int>("a", {1, 2});
-        df.add_index<int>("b", {10, 20, 30});
-        df.add_index<int>("c", {100, 200});
+        df.add_uniform_index<int>("a", {1, 2});
+        df.add_uniform_index<int>("b", {10, 20, 30});
+        df.add_uniform_index<int>("c", {100, 200});
         df.add_column<double>("v", std::vector<double>(12, 0.0));
         df.set_type("zparam");
 
@@ -713,7 +695,7 @@ int main() {
     std::cout << "\n=== Test 33: path/type/name metadata ==" << std::endl;
     {
         DataFrame df;
-        df.add_index<int>("f", {1, 2});
+        df.add_uniform_index<int>("f", {1, 2});
         df.add_column<double>("v", {10, 20});
 
         // Default empty
@@ -790,8 +772,8 @@ int main() {
     std::cout << "\n=== Test 36: rename_last ==" << std::endl;
     {
         DataFrame df;
-        df.add_index<int>("a", {1, 2});
-        df.add_index<int>("b", {10, 20, 30});
+        df.add_uniform_index<int>("a", {1, 2});
+        df.add_uniform_index<int>("b", {10, 20, 30});
         df.add_column<double>("t", {1, 2, 3, 4, 5, 6});
         // chain: sub("t") then rename_last
         auto s = df.sub("t");
@@ -880,6 +862,245 @@ int main() {
     {
         DataFrame df;
         assert(df.to_csv().empty());
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 43: add_varying_index basic ===
+    std::cout << "\n=== Test 43: add_varying_index basic ===" << std::endl;
+    {
+        // bias (Uniform): [1, 2]
+        // freq (Varying, group_size=3): different per bias group
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_varying_index<double>("freq",
+            {1.0, 2.0, 3.0,   // bias=1
+             1.5, 2.5, 3.5},  // bias=2
+            3, "GHz");
+
+        assert(df.num_rows() == 6);
+        assert(df.num_indices() == 2);
+
+        // Check dim info
+        auto dim_bias = df.get_index_dim("bias");
+        assert(dim_bias.is_uniform());
+        assert(dim_bias.dim_size() == 2);
+
+        auto dim_freq = df.get_index_dim("freq");
+        assert(dim_freq.is_varying());
+        assert(dim_freq.dim_size() == 3);
+        assert(dim_freq.group_size == 3);
+
+        // Verify data layout
+        auto bias_col = df.get_column_as<int>("bias");
+        assert(bias_col[0] == 1 && bias_col[1] == 1 && bias_col[2] == 1);
+        assert(bias_col[3] == 2 && bias_col[4] == 2 && bias_col[5] == 2);
+
+        auto freq_col = df.get_column_as<double>("freq");
+        assert(approx_equal(freq_col[0], 1.0));
+        assert(approx_equal(freq_col[3], 1.5));
+
+        // Add dependent column
+        df.add_column<double>("S11", {-10, -20, -30, -15, -25, -35});
+        assert(df.num_rows() == 6);
+
+        std::cout << df.to_string() << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 44: add_varying_index validation ===
+    std::cout << "\n=== Test 44: add_varying_index validation ===" << std::endl;
+    {
+        // First index cannot be varying
+        bool caught = false;
+        try {
+            DataFrame first;
+            first.add_varying_index<double>("freq", {1.0, 2.0}, 2);
+        } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+
+        // Wrong number of values
+        caught = false;
+        try {
+            df.add_varying_index<double>("freq", {1.0, 2.0}, 3);
+        } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+
+        // group_size = 0
+        caught = false;
+        try {
+            df.add_varying_index<double>("freq", {}, 0);
+        } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 45: add_varying_index with loc ===
+    std::cout << "\n=== Test 45: add_varying_index loc ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_varying_index<double>("freq",
+            {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3);
+        df.add_column<double>("S11", {-10, -20, -30, -15, -25, -35});
+
+        // loc({1}) — fix freq dim at index 1 within each group
+        auto sub = df.loc({1});
+        assert(sub->num_rows() == 2);
+        auto s11 = sub->get_column_as<double>("S11");
+        assert(approx_equal(s11[0], -20.0));
+        assert(approx_equal(s11[1], -25.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 46: add_varying_index_groups ===
+    std::cout << "\n=== Test 46: add_varying_index_groups ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}}, "GHz");
+        assert(df.num_rows() == 6);
+        auto freq_col = df.get_column_as<double>("freq");
+        assert(approx_equal(freq_col[0], 1.0));
+        assert(approx_equal(freq_col[3], 1.5));
+
+        // Add an inner uniform index after varying
+        df.add_uniform_index<std::string>("port", {"S11", "S21"});
+        assert(df.num_rows() == 12);
+        auto bias_col = df.get_column_as<int>("bias");
+        auto port_col = df.get_column_as<std::string>("port");
+        assert(bias_col[0] == 1 && bias_col[1] == 1);
+        assert(port_col[0] == "S11" && port_col[1] == "S21");
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 47: add_varying_index_groups validation ===
+    std::cout << "\n=== Test 47: add_varying_index_groups validation ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+
+        bool caught = false;
+        try {
+            df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}});
+        } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+
+        caught = false;
+        try {
+            df.add_varying_index_groups<double>("freq", {{1.0, 2.0}, {1.5}});
+        } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 48: set_index auto-infer varying in middle ===
+    std::cout << "\n=== Test 48: set_index auto infer varying ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("bias",  {1,1,1,1,1,1,2,2,2,2,2,2});
+        df.add_column<double>("freq", {1,1,2,2,3,3,1.5,1.5,2.5,2.5,3.5,3.5});
+        df.add_column<std::string>("port", {"S11","S21","S11","S21","S11","S21",
+                                              "S11","S21","S11","S21","S11","S21"});
+        df.add_column<double>("S", {-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36});
+
+        df.set_index({"bias", "freq", "port"});
+
+        auto d0 = df.get_index_dim("bias");
+        auto d1 = df.get_index_dim("freq");
+        auto d2 = df.get_index_dim("port");
+        assert(d0.is_uniform() && d0.dim_size() == 2);
+        assert(d1.is_varying() && d1.group_size == 3);
+        assert(d2.is_uniform() && d2.dim_size() == 2);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 49: set_index keeps unordered uniform behavior ===
+    std::cout << "\n=== Test 49: set_index unordered uniform ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("a", {2,2,2,1,1,1});
+        df.add_column<int>("b", {30,10,20,30,10,20});
+        df.add_column<int>("v", {6,4,5,3,1,2});
+        df.set_index({"a", "b"});
+
+        auto a = df.get_column_as<int>("a");
+        auto b = df.get_column_as<int>("b");
+        assert(a[0] == 2 && b[0] == 30);
+        assert(a[5] == 1 && b[5] == 20);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 50: set_index infer two varying dims ===
+    std::cout << "\n=== Test 50: set_index infer two varying dims ===" << std::endl;
+    {
+        DataFrame df;
+        // Layout by bias(2) x freq(varying=2) x port(varying=2)
+        df.add_column<int>("bias",  {1,1,1,1,2,2,2,2});
+        df.add_column<double>("freq", {1,1,2,2,1.5,1.5,2.5,2.5});
+        df.add_column<std::string>("port", {"S11","S21","S11","S21","S11","S21","S11","S21"});
+        df.add_column<double>("S", {-10,-11,-20,-21,-15,-16,-25,-26});
+
+        df.set_index({"bias", "freq", "port"});
+        auto d0 = df.get_index_dim("bias");
+        auto d1 = df.get_index_dim("freq");
+        auto d2 = df.get_index_dim("port");
+        assert(d0.is_uniform() && d0.dim_size() == 2);
+        assert(d1.is_varying() && d1.group_size == 2);
+        assert(d2.is_uniform() && d2.dim_size() == 2);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 51: add two varying indices and inner uniform ===
+    std::cout << "\n=== Test 51: add two varying + inner uniform ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_varying_index_groups<double>("freq", {{1.0, 2.0}, {1.5, 2.5}});
+        // old_rows=4, group_size=2 => values=8
+        df.add_varying_index<double>("temp", {25,30,25,30,26,31,26,31}, 2, "C");
+        df.add_uniform_index<std::string>("port", {"S11", "S21"});
+
+        assert(df.num_rows() == 16);
+        auto d_freq = df.get_index_dim("freq");
+        auto d_temp = df.get_index_dim("temp");
+        auto d_port = df.get_index_dim("port");
+        assert(d_freq.is_varying() && d_freq.group_size == 2);
+        assert(d_temp.is_varying() && d_temp.group_size == 2);
+        assert(d_port.is_uniform() && d_port.dim_size() == 2);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 52: set_index infer fails on non-constant blocks ===
+    std::cout << "\n=== Test 52: set_index invalid mixed blocks ===" << std::endl;
+    {
+        DataFrame df;
+        // freq run lengths are inconsistent (2 then 1 then 1), not a valid grouped layout.
+        df.add_column<int>("bias", {1,1,2,2});
+        df.add_column<int>("freq", {10,10,20,10});
+        df.add_column<double>("v", {1,2,3,4});
+        bool caught = false;
+        try { df.set_index({"bias", "freq"}); }
+        catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 53: reset then set_index infer mixed ===
+    std::cout << "\n=== Test 53: reset then set_index infer mixed ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}});
+        df.add_uniform_index<std::string>("port", {"S11", "S21"});
+        df.add_column<double>("S", {-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36});
+
+        df.reset_index();
+        df.set_index({"bias", "freq", "port"});
+        auto d1 = df.get_index_dim("freq");
+        assert(d1.is_varying() && d1.group_size == 3);
     }
     std::cout << "PASSED" << std::endl;
 

@@ -1104,6 +1104,43 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // === Test 54: set_index with 1/3/4 columns, keep 2nd as dependent ===
+    std::cout << "\n=== Test 54: set_index selected columns layout ===" << std::endl;
+    {
+        DataFrame df;
+        // Add all as regular columns first (order: 1=bias, 2=val, 3=freq, 4=port)
+        df.add_column<int>("bias", {2, 1, 2, 1, 1, 2, 1, 2});
+        df.add_column<int>("val",  {222,111,211,122,112,221,121,212});
+        df.add_column<int>("freq", {20, 10, 10, 20, 10, 20, 20, 10});
+        df.add_column<std::string>("port", {"S21","S11","S11","S21","S21","S11","S11","S21"});
+
+        // Promote columns 1/3/4 to index; keep column 2 as dependent
+        df.set_index({"bias", "freq", "port"});
+
+        assert(df.num_indices() == 3);
+        assert(df.dependent_names() == (std::vector<std::string>{"val"}));
+
+        // Index columns should be placed first in the requested order.
+        auto names = df.column_names();
+        assert(names[0] == "bias");
+        assert(names[1] == "freq");
+        assert(names[2] == "port");
+        assert(names[3] == "val");
+
+        // First-appearance levels are bias=[2,1], freq=[20,10], port=[S21,S11],
+        // so dependent values should be reordered into this Cartesian layout.
+        auto v = df.get_column_as<int>("val");
+        assert(v[0] == 222);
+        assert(v[1] == 221);
+        assert(v[2] == 212);
+        assert(v[3] == 211);
+        assert(v[4] == 122);
+        assert(v[5] == 121);
+        assert(v[6] == 112);
+        assert(v[7] == 111);
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== ALL TESTS PASSED ===" << std::endl;
     return 0;
 }

@@ -661,4 +661,26 @@ assert df_reset.get_index_dim("freq")["kind"] == "varying"
 assert df_reset.get_index_dim("freq")["group_size"] == 3
 print("PASSED")
 
+# === Python Test 50: set_index with 1/3/4 columns, keep 2nd as dependent ===
+print("\n=== Python Test 50: set_index selected columns layout ===")
+df_sel = pdf.DataFrame()
+df_sel.add_column("bias", [2,1,2,1,1,2,1,2])
+df_sel.add_column("val",  [222,111,211,122,112,221,121,212])
+df_sel.add_column("freq", [20,10,10,20,10,20,20,10])
+df_sel.add_column("port", ["S21","S11","S11","S21","S21","S11","S11","S21"])
+
+df_sel.set_index("bias", "freq", "port")
+assert df_sel.num_indices() == 3
+assert df_sel.dependent_names() == ["val"]
+
+cols = df_sel.column_names()
+assert cols[0] == "bias"
+assert cols[1] == "freq"
+assert cols[2] == "port"
+assert cols[3] == "val"
+
+v = df_sel["val"]
+assert v == [222,221,212,211,122,121,112,111]
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

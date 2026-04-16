@@ -19,6 +19,7 @@
 #include <cassert>
 #include <iomanip>
 #include <fstream>
+#include <exprdf/UnitFormat.hpp>
 
 namespace exprdf {
 
@@ -71,7 +72,7 @@ inline bool values_equal<std::complex<double>>(const std::complex<double>& a, co
 class Column {
 public:
     DType tag;
-    std::string quantity;   // physical unit, e.g. "V", "Hz"
+    std::string quantity;   // quantity key, e.g. "voltage" or "frequency"
 
     Column() : tag(DType::Int) {}
 
@@ -329,9 +330,9 @@ struct IndexDim {
     template <typename T>
     static IndexDim create_uniform(const std::string& name,
                                    const std::vector<T>& lvls,
-                                   const std::string& unit = "") {
+                                   const std::string& quantity = unit_format::quantity::unitless) {
         Column col = make_column<T>(lvls);
-        col.quantity = unit;
+        col.quantity = quantity;
         return {name, IndexKind::Uniform, col, 0};
     }
 
@@ -341,9 +342,9 @@ struct IndexDim {
 
     static IndexDim create_varying(const std::string& name,
                                    std::size_t gs,
-                                   const std::string& unit = "") {
+                                   const std::string& quantity = unit_format::quantity::unitless) {
         Column col;
-        col.quantity = unit;
+        col.quantity = quantity;
         return {name, IndexKind::Varying, col, gs};
     }
 };
@@ -356,7 +357,7 @@ public:
 
     template <typename T>
     void add_column(const std::string& name, const std::vector<T>& data,
-                    const std::string& unit = "") {
+                    const std::string& quantity = unit_format::quantity::unitless) {
         if (!columns_.empty()) {
             if (data.size() != num_rows()) {
                 throw std::invalid_argument(
@@ -369,13 +370,14 @@ public:
         }
         col_order_.push_back(name);
         Column col = make_column<T>(data);
-        col.quantity = unit;
+        col.quantity = quantity;
         columns_[name] = col;
     }
 
     template <typename T>
     void insert_column(std::size_t pos, const std::string& name,
-                       const std::vector<T>& data, const std::string& unit = "") {
+                       const std::vector<T>& data,
+                       const std::string& quantity = unit_format::quantity::unitless) {
         if (!columns_.empty()) {
             if (data.size() != num_rows()) {
                 throw std::invalid_argument(
@@ -393,14 +395,14 @@ public:
         }
         col_order_.insert(col_order_.begin() + pos, name);
         Column col = make_column<T>(data);
-        col.quantity = unit;
+        col.quantity = quantity;
         columns_[name] = col;
     }
 
     template <typename T>
     void prepend_column(const std::string& name, const std::vector<T>& data,
-                        const std::string& unit = "") {
-        insert_column<T>(0, name, data, unit);
+                        const std::string& quantity = unit_format::quantity::unitless) {
+        insert_column<T>(0, name, data, quantity);
     }
 
     void remove_column(const std::string& name) {
@@ -564,7 +566,7 @@ public:
 
         std::ostringstream ss;
 
-        // Header (name + unit if present)
+        // Header (name + quantity key if present)
         std::vector<std::string> headers;
         for (const auto& name : col_order_) {
             auto it = columns_.find(name);
@@ -640,7 +642,7 @@ public:
     // Must be called before any dependent (data) columns are added.
     template <typename T>
     void add_uniform_index(const std::string& name, const std::vector<T>& levels,
-                   const std::string& unit = "") {
+                   const std::string& quantity = unit_format::quantity::unitless) {
         if (levels.empty())
             throw std::invalid_argument("Index '" + name + "' levels cannot be empty");
         if (has_column(name))
@@ -658,7 +660,7 @@ public:
             // First index: add levels as column data directly
             col_order_.push_back(name);
             Column col = make_column<T>(levels);
-            col.quantity = unit;
+            col.quantity = quantity;
             columns_[name] = col;
         } else {
             // Expand existing columns: repeat each value new_n times
@@ -668,11 +670,11 @@ public:
             // Add new column: tile levels old_rows times
             col_order_.push_back(name);
             Column col = make_column<T>(levels);
-            col.quantity = unit;
+            col.quantity = quantity;
             columns_[name] = col.tile(old_rows);
         }
 
-        index_dims_.push_back(IndexDim::create_uniform(name, levels, unit));
+        index_dims_.push_back(IndexDim::create_uniform(name, levels, quantity));
     }
 
     // Add a varying index dimension. Unlike uniform indices (Cartesian),
@@ -683,7 +685,7 @@ public:
     void add_varying_index(const std::string& name,
                            const std::vector<T>& values,
                            std::size_t group_size,
-                           const std::string& unit = "") {
+                           const std::string& quantity = unit_format::quantity::unitless) {
         if (group_size == 0)
             throw std::invalid_argument("group_size cannot be zero");
         if (has_column(name))
@@ -709,10 +711,10 @@ public:
         }
         col_order_.push_back(name);
         Column col = make_column<T>(values);
-        col.quantity = unit;
+        col.quantity = quantity;
         columns_[name] = col;
 
-        index_dims_.push_back(IndexDim::create_varying(name, group_size, unit));
+        index_dims_.push_back(IndexDim::create_varying(name, group_size, quantity));
     }
 
     // Add a varying index by per-group values to avoid manual flattening.
@@ -720,7 +722,7 @@ public:
     template <typename T>
     void add_varying_index_groups(const std::string& name,
                                   const std::vector<std::vector<T>>& groups,
-                                  const std::string& unit = "") {
+                                  const std::string& quantity = unit_format::quantity::unitless) {
         std::size_t old_rows = num_rows();
         if (old_rows == 0)
             throw std::invalid_argument(
@@ -747,7 +749,7 @@ public:
             flat.insert(flat.end(), groups[i].begin(), groups[i].end());
         }
 
-        add_varying_index<T>(name, flat, group_size, unit);
+        add_varying_index<T>(name, flat, group_size, quantity);
     }
 
     // Build a DataFrame from the Cartesian product of index dimensions

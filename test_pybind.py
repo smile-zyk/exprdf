@@ -131,23 +131,23 @@ except (RuntimeError, IndexError):
     pass
 print("PASSED")
 
-print("\n=== Python Test 13: column units ===")
+print("\n=== Python Test 13: column quantities ===")
 df_u = pdf.DataFrame()
-df_u.add_column("voltage", [1.0, 2.0, 3.0], unit="V")
-df_u.add_column("current", [0.1, 0.2, 0.3], unit="A")
-df_u.add_column("index", [1, 2, 3])  # no unit
-assert df_u.column_quantity("voltage") == "V"
-assert df_u.column_quantity("current") == "A"
+df_u.add_column("voltage", [1.0, 2.0, 3.0], quantity="voltage")
+df_u.add_column("current", [0.1, 0.2, 0.3], quantity="current")
+df_u.add_column("index", [1, 2, 3])  # no quantity
+assert df_u.column_quantity("voltage") == "voltage"
+assert df_u.column_quantity("current") == "current"
 assert df_u.column_quantity("index") == ""
-df_u.set_column_quantity("index", "n")
-assert df_u.column_quantity("index") == "n"
+df_u.set_column_quantity("index", "temperature")
+assert df_u.column_quantity("index") == "temperature"
 print(repr(df_u))
-# slice preserves units
+# slice preserves quantities
 s_u = df_u.slice(0, 2)
-assert s_u.column_quantity("voltage") == "V"
-# copy preserves units
+assert s_u.column_quantity("voltage") == "voltage"
+# copy preserves quantities
 c_u = df_u.copy()
-assert c_u.column_quantity("current") == "A"
+assert c_u.column_quantity("current") == "current"
 print("PASSED")
 
 print("\n=== Python Test 14: insert_column / prepend_column ===")
@@ -377,14 +377,12 @@ assert df30.independent_names() == df30.index_names()
 assert df30.independent_names() == ["freq", "port"]
 print("PASSED")
 
-print("\n=== Python Test 29: column_quantity alias ===")
+print("\n=== Python Test 29: column_quantity API ===")
 df31 = pdf.DataFrame()
-df31.add_column("voltage", [1.0, 2.0], "V")
-assert df31.column_quantity("voltage") == "V"
-df31.set_column_quantity("voltage", "mV")
-assert df31.column_quantity("voltage") == "mV"
-# Old name still works
-assert df31.column_unit("voltage") == "mV"  # old alias still works
+df31.add_column("voltage", [1.0, 2.0], "voltage")
+assert df31.column_quantity("voltage") == "voltage"
+df31.set_column_quantity("voltage", "current")
+assert df31.column_quantity("voltage") == "current"
 print("PASSED")
 
 print("\n=== Python Test 30: sub dependent column ===")
@@ -518,7 +516,7 @@ print("PASSED")
 print("\n=== Python Test 39: add_varying_index basic ===")
 df_var = pdf.DataFrame()
 df_var.add_uniform_index("bias", [1, 2])
-df_var.add_varying_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "GHz")
+df_var.add_varying_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "frequency")
 assert df_var.num_rows() == 6
 assert df_var.num_indices() == 2
 dim_freq = df_var.get_index_dim("freq")
@@ -553,7 +551,7 @@ print("PASSED")
 print("\n=== Python Test 42: add_varying_index_groups ===")
 df_groups = pdf.DataFrame()
 df_groups.add_uniform_index("bias", [1, 2])
-df_groups.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "GHz")
+df_groups.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "frequency")
 assert df_groups.num_rows() == 6
 df_groups.add_uniform_index("port", ["S11", "S21"])
 assert df_groups.num_rows() == 12
@@ -626,7 +624,7 @@ print("\n=== Python Test 47: add two varying + inner uniform ===")
 df_v2 = pdf.DataFrame()
 df_v2.add_uniform_index("bias", [1, 2])
 df_v2.add_varying_index_groups("freq", [[1.0, 2.0], [1.5, 2.5]])
-df_v2.add_varying_index("temp", [25,30,25,30,26,31,26,31], 2, "C")
+df_v2.add_varying_index("temp", [25,30,25,30,26,31,26,31], 2, "temperature")
 df_v2.add_uniform_index("port", ["S11", "S21"])
 assert df_v2.num_rows() == 16
 assert df_v2.get_index_dim("freq")["kind"] == "varying"

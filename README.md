@@ -48,7 +48,7 @@ python test_pybind.py
 using namespace exprdf;
 
 auto df = std::make_shared<DataFrame>();
-df->add_uniform_index<double>("freq", {1e9, 2e9, 3e9}, "Frequency");
+df->add_uniform_index<double>("freq", {1e9, 2e9, 3e9}, "frequency");
 df->add_uniform_index<std::string>("port", {"S11", "S21"});
 df->add_column<std::complex<double>>("value", ...);
 
@@ -61,7 +61,7 @@ df->save_csv("output.csv");
 // Grouped varying index (values differ per outer group)
 auto df2 = std::make_shared<DataFrame>();
 df2->add_uniform_index<int>("bias", {1, 2});
-df2->add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}}, "GHz");
+df2->add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}}, "frequency");
 
 // First index must be uniform; varying index requires an outer group.
 ```
@@ -72,7 +72,7 @@ df2->add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}}
 import exprdf
 
 df = exprdf.DataFrame()
-df.add_uniform_index("freq", [1e9, 2e9, 3e9], "Frequency")
+df.add_uniform_index("freq", [1e9, 2e9, 3e9], "frequency")
 df.add_uniform_index("port", ["S11", "S21"])
 df.add_column("value", [...])
 
@@ -82,7 +82,7 @@ df.save_csv("output.csv")
 # Grouped varying index
 df2 = exprdf.DataFrame()
 df2.add_uniform_index("bias", [1, 2])
-df2.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "GHz")
+df2.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "frequency")
 
 # set_index can infer mixed uniform/varying dimensions from grouped layout
 ```

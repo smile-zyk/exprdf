@@ -6,6 +6,7 @@
 #include <fstream>
 #include <cstdio>
 #include <exprdf/exprdf.hpp>
+#include <exprdf/UnitFormat.hpp>
 
 int main() {
     using namespace exprdf;
@@ -160,25 +161,38 @@ int main() {
     std::cout << "\n=== Test 10: to_string ===" << std::endl;
     std::cout << frame.to_string() << std::endl;
 
-    // === Test 11: column units ===
-    std::cout << "\n=== Test 11: column units ===" << std::endl;
+    // === Test 11: column quantities ===
+    std::cout << "\n=== Test 11: column quantities ===" << std::endl;
     DataFrame frame_u;
-    frame_u.add_column<double>("voltage", {1.0, 2.0, 3.0}, "V");
-    frame_u.add_column<double>("current", {0.1, 0.2, 0.3}, "A");
-    frame_u.add_column<int>("index", {1, 2, 3});  // no unit
-    assert(frame_u.column_quantity("voltage") == "V");
-    assert(frame_u.column_quantity("current") == "A");
+    frame_u.add_column<double>("voltage", {1.0, 2.0, 3.0}, unit_format::quantity::voltage);
+    frame_u.add_column<double>("current", {0.1, 0.2, 0.3}, unit_format::quantity::current);
+    frame_u.add_column<int>("index", {1, 2, 3});  // no quantity
+    assert(frame_u.column_quantity("voltage") == unit_format::quantity::voltage);
+    assert(frame_u.column_quantity("current") == unit_format::quantity::current);
     assert(frame_u.column_quantity("index") == "");
-    frame_u.set_column_quantity("index", "n");
-    assert(frame_u.column_quantity("index") == "n");
+    frame_u.set_column_quantity("index", "temperature");
+    assert(frame_u.column_quantity("index") == "temperature");
     std::cout << frame_u.to_string() << std::endl;
-    // slice preserves units
+    // slice preserves quantities
     auto slice_u = frame_u.slice(0, 2);
-    assert(slice_u->column_quantity("voltage") == "V");
-    // copy preserves units
+    assert(slice_u->column_quantity("voltage") == unit_format::quantity::voltage);
+    // copy preserves quantities
     auto copy_u = frame_u.copy();
-    assert(copy_u->column_quantity("current") == "A");
+    assert(copy_u->column_quantity("current") == unit_format::quantity::current);
     std::cout << "PASSED" << std::endl;
+
+        // === Test 11b: unit_format public API ===
+        std::cout << "\n=== Test 11b: unit_format public API ===" << std::endl;
+        assert(unit_format::format(unit_format::quantity::frequency, 2.5e9) == "2.500 GHz");
+        assert(unit_format::Format(unit_format::quantity::frequency, 1500.0) ==
+            unit_format::format(unit_format::quantity::frequency, 1500.0));
+        auto freq_scale = unit_format::scale_for_range(unit_format::quantity::frequency,
+                                  1.0e6, 20.0e6);
+        assert(freq_scale.unit_symbol == "MHz");
+        assert(unit_format::format(unit_format::quantity::unitless, 25.0) == "25.00");
+        unit_format::register_units("temperature", {{"C", 1.0}});
+        assert(unit_format::format("temperature", 25.0) == "25.00 C");
+        std::cout << "PASSED" << std::endl;
 
     // === Test 12: insert_column / prepend_column ===
     std::cout << "\n=== Test 12: insert_column / prepend_column ===" << std::endl;
@@ -875,7 +889,7 @@ int main() {
         df.add_varying_index<double>("freq",
             {1.0, 2.0, 3.0,   // bias=1
              1.5, 2.5, 3.5},  // bias=2
-            3, "GHz");
+            3, unit_format::quantity::frequency);
 
         assert(df.num_rows() == 6);
         assert(df.num_indices() == 2);
@@ -960,7 +974,8 @@ int main() {
     {
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}}, "GHz");
+        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}},
+                                            unit_format::quantity::frequency);
         assert(df.num_rows() == 6);
         auto freq_col = df.get_column_as<double>("freq");
         assert(approx_equal(freq_col[0], 1.0));

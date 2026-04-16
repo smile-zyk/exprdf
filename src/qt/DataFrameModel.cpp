@@ -101,13 +101,13 @@ QString DataFrameModel::formatCell(const Column& col, std::size_t row) const
     case DType::Int: {
         int v = col.as<int>()[row];
         if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, v));
+            return QString::fromStdString(unit_format::format(qty, v));
         return QString::number(v);
     }
     case DType::Double: {
         double v = col.as<double>()[row];
         if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, v));
+            return QString::fromStdString(unit_format::format(qty, v));
         return QString::number(v, 'g', 10);
     }
     case DType::String:
@@ -115,7 +115,7 @@ QString DataFrameModel::formatCell(const Column& col, std::size_t row) const
     case DType::Complex: {
         const std::complex<double>& c = col.as<std::complex<double>>()[row];
         if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, c));
+            return QString::fromStdString(unit_format::format(qty, c));
         QString s;
         s += QString::number(c.real(), 'g', 6);
         if (c.imag() >= 0) s += " + ";

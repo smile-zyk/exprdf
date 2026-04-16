@@ -12,16 +12,16 @@ PYBIND11_MODULE(exprdf, m) {
         .def(py::init<>())
 
         // add_column: auto-detect type from Python list
-        .def("add_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& unit) {
+        .def("add_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
             if (data.empty()) {
-                self.add_column<double>(name, {}, unit);
+                self.add_column<double>(name, {}, quantity);
                 return;
             }
             py::object first = data[0];
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.add_column<std::string>(name, v, unit);
+                self.add_column<std::string>(name, v, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false, has_complex = false;
                 for (auto item : data) {
@@ -31,39 +31,39 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_complex) {
                     std::vector<std::complex<double>> v;
                     for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                    self.add_column<std::complex<double>>(name, v, unit);
+                    self.add_column<std::complex<double>>(name, v, quantity);
                 } else if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.add_column<double>(name, v, unit);
+                    self.add_column<double>(name, v, quantity);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.add_column<int>(name, v, unit);
+                    self.add_column<int>(name, v, quantity);
                 }
             } else if (PyComplex_Check(first.ptr())) {
                 std::vector<std::complex<double>> v;
                 for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                self.add_column<std::complex<double>>(name, v, unit);
+                self.add_column<std::complex<double>>(name, v, quantity);
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.add_column<double>(name, v, unit);
+                self.add_column<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("unit") = "",
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
            "Add a column (type auto-detected from data: int, float, str, complex)")
 
         // insert_column: insert at position with auto-detect type
-        .def("insert_column", [](exprdf::DataFrame& self, std::size_t pos, const std::string& name, py::list data, const std::string& unit) {
+        .def("insert_column", [](exprdf::DataFrame& self, std::size_t pos, const std::string& name, py::list data, const std::string& quantity) {
             if (data.empty()) {
-                self.insert_column<double>(pos, name, {}, unit);
+                self.insert_column<double>(pos, name, {}, quantity);
                 return;
             }
             py::object first = data[0];
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.insert_column<std::string>(pos, name, v, unit);
+                self.insert_column<std::string>(pos, name, v, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false, has_complex = false;
                 for (auto item : data) {
@@ -73,39 +73,39 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_complex) {
                     std::vector<std::complex<double>> v;
                     for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                    self.insert_column<std::complex<double>>(pos, name, v, unit);
+                    self.insert_column<std::complex<double>>(pos, name, v, quantity);
                 } else if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.insert_column<double>(pos, name, v, unit);
+                    self.insert_column<double>(pos, name, v, quantity);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.insert_column<int>(pos, name, v, unit);
+                    self.insert_column<int>(pos, name, v, quantity);
                 }
             } else if (PyComplex_Check(first.ptr())) {
                 std::vector<std::complex<double>> v;
                 for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                self.insert_column<std::complex<double>>(pos, name, v, unit);
+                self.insert_column<std::complex<double>>(pos, name, v, quantity);
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.insert_column<double>(pos, name, v, unit);
+                self.insert_column<double>(pos, name, v, quantity);
             }
-        }, py::arg("pos"), py::arg("name"), py::arg("data"), py::arg("unit") = "",
+        }, py::arg("pos"), py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
            "Insert a column at position (type auto-detected)")
 
         // prepend_column: insert at beginning with auto-detect type
-        .def("prepend_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& unit) {
+        .def("prepend_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
             if (data.empty()) {
-                self.prepend_column<double>(name, {}, unit);
+                self.prepend_column<double>(name, {}, quantity);
                 return;
             }
             py::object first = data[0];
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.prepend_column<std::string>(name, v, unit);
+                self.prepend_column<std::string>(name, v, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false, has_complex = false;
                 for (auto item : data) {
@@ -115,26 +115,26 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_complex) {
                     std::vector<std::complex<double>> v;
                     for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                    self.prepend_column<std::complex<double>>(name, v, unit);
+                    self.prepend_column<std::complex<double>>(name, v, quantity);
                 } else if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.prepend_column<double>(name, v, unit);
+                    self.prepend_column<double>(name, v, quantity);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.prepend_column<int>(name, v, unit);
+                    self.prepend_column<int>(name, v, quantity);
                 }
             } else if (PyComplex_Check(first.ptr())) {
                 std::vector<std::complex<double>> v;
                 for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                self.prepend_column<std::complex<double>>(name, v, unit);
+                self.prepend_column<std::complex<double>>(name, v, quantity);
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.prepend_column<double>(name, v, unit);
+                self.prepend_column<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("unit") = "",
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
            "Insert a column at the beginning (type auto-detected)")
 
         // get_column: dispatch by stored dtype (by name)
@@ -205,10 +205,6 @@ PYBIND11_MODULE(exprdf, m) {
              "Get column quantity")
         .def("set_column_quantity", &exprdf::DataFrame::set_column_quantity,
              py::arg("name"), py::arg("quantity"), "Set column quantity")
-        .def("column_unit", &exprdf::DataFrame::column_quantity, py::arg("name"),
-             "Get column quantity (alias for column_quantity)")
-        .def("set_column_unit", &exprdf::DataFrame::set_column_quantity,
-             py::arg("name"), py::arg("quantity"), "Set column quantity (alias for set_column_quantity)")
         .def("num_rows", &exprdf::DataFrame::num_rows)
         .def("num_columns", &exprdf::DataFrame::num_columns)
         .def("head", &exprdf::DataFrame::head, py::arg("n") = 5)
@@ -262,7 +258,7 @@ PYBIND11_MODULE(exprdf, m) {
         // --- Multi-index ---
 
         // add_uniform_index: auto-detect type from Python list
-        .def("add_uniform_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& unit) {
+        .def("add_uniform_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
             if (data.empty()) {
                 throw std::invalid_argument("Index levels cannot be empty");
             }
@@ -270,7 +266,7 @@ PYBIND11_MODULE(exprdf, m) {
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.add_uniform_index<std::string>(name, v, unit);
+                self.add_uniform_index<std::string>(name, v, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false;
                 for (auto item : data) {
@@ -279,22 +275,22 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.add_uniform_index<double>(name, v, unit);
+                    self.add_uniform_index<double>(name, v, quantity);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.add_uniform_index<int>(name, v, unit);
+                    self.add_uniform_index<int>(name, v, quantity);
                 }
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.add_uniform_index<double>(name, v, unit);
+                self.add_uniform_index<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("unit") = "",
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
            "Add an independent (index) dimension with auto-detected type")
 
         // add_varying_index: auto-detect type from Python list
-        .def("add_varying_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, std::size_t group_size, const std::string& unit) {
+        .def("add_varying_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, std::size_t group_size, const std::string& quantity) {
             if (data.empty()) {
                 throw std::invalid_argument("Values cannot be empty");
             }
@@ -302,7 +298,7 @@ PYBIND11_MODULE(exprdf, m) {
             if (py::isinstance<py::str>(first)) {
                 std::vector<std::string> v;
                 for (auto item : data) v.push_back(item.cast<std::string>());
-                self.add_varying_index<std::string>(name, v, group_size, unit);
+                self.add_varying_index<std::string>(name, v, group_size, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false;
                 for (auto item : data) {
@@ -311,22 +307,22 @@ PYBIND11_MODULE(exprdf, m) {
                 if (has_float) {
                     std::vector<double> v;
                     for (auto item : data) v.push_back(item.cast<double>());
-                    self.add_varying_index<double>(name, v, group_size, unit);
+                    self.add_varying_index<double>(name, v, group_size, quantity);
                 } else {
                     std::vector<int> v;
                     for (auto item : data) v.push_back(item.cast<int>());
-                    self.add_varying_index<int>(name, v, group_size, unit);
+                    self.add_varying_index<int>(name, v, group_size, quantity);
                 }
             } else {
                 std::vector<double> v;
                 for (auto item : data) v.push_back(item.cast<double>());
-                self.add_varying_index<double>(name, v, group_size, unit);
+                self.add_varying_index<double>(name, v, group_size, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("group_size"), py::arg("unit") = "",
+        }, py::arg("name"), py::arg("data"), py::arg("group_size"), py::arg("quantity") = unit_format::quantity::unitless,
            "Add a varying index dimension (values differ per outer-index group)")
 
         // add_varying_index_groups: grouped input, each row-group provides one list
-        .def("add_varying_index_groups", [](exprdf::DataFrame& self, const std::string& name, py::list groups, const std::string& unit) {
+        .def("add_varying_index_groups", [](exprdf::DataFrame& self, const std::string& name, py::list groups, const std::string& quantity) {
             if (groups.empty()) {
                 throw std::invalid_argument("groups cannot be empty");
             }
@@ -349,7 +345,7 @@ PYBIND11_MODULE(exprdf, m) {
                     for (auto item : gl) row.push_back(item.cast<std::string>());
                     vv.push_back(std::move(row));
                 }
-                self.add_varying_index_groups<std::string>(name, vv, unit);
+                self.add_varying_index_groups<std::string>(name, vv, quantity);
             } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
                 bool has_float = false;
                 for (auto g : groups) {
@@ -367,7 +363,7 @@ PYBIND11_MODULE(exprdf, m) {
                         for (auto item : gl) row.push_back(item.cast<double>());
                         vv.push_back(std::move(row));
                     }
-                    self.add_varying_index_groups<double>(name, vv, unit);
+                    self.add_varying_index_groups<double>(name, vv, quantity);
                 } else {
                     std::vector<std::vector<int>> vv;
                     for (auto g : groups) {
@@ -377,7 +373,7 @@ PYBIND11_MODULE(exprdf, m) {
                         for (auto item : gl) row.push_back(item.cast<int>());
                         vv.push_back(std::move(row));
                     }
-                    self.add_varying_index_groups<int>(name, vv, unit);
+                    self.add_varying_index_groups<int>(name, vv, quantity);
                 }
             } else {
                 std::vector<std::vector<double>> vv;
@@ -388,9 +384,9 @@ PYBIND11_MODULE(exprdf, m) {
                     for (auto item : gl) row.push_back(item.cast<double>());
                     vv.push_back(std::move(row));
                 }
-                self.add_varying_index_groups<double>(name, vv, unit);
+                self.add_varying_index_groups<double>(name, vv, quantity);
             }
-        }, py::arg("name"), py::arg("groups"), py::arg("unit") = "",
+        }, py::arg("name"), py::arg("groups"), py::arg("quantity") = unit_format::quantity::unitless,
            "Add a varying index dimension from per-group value lists")
 
         .def("num_indices", &exprdf::DataFrame::num_indices,

@@ -20,7 +20,7 @@ int main(int argc, char* argv[])
     df->add_uniform_index<double>("imag_index", imag_vals);
     df->add_uniform_index<double>("real_index", real_vals);
     df->add_uniform_index<double>("freq", freq_vals);
-    df->set_column_quantity("freq", unit_format::kFrequency);
+    df->set_column_quantity("freq", unit_format::quantity::frequency);
 
     // Generate complex Pdel data: 200,400 rows
     std::size_t n = df->num_rows();
@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
         double im = im_idx * std::sin(f * 0.3) * 0.05;
         pdel.push_back(std::complex<double>(re, im));
     }
-    df->add_column<std::complex<double>>("Pdel", pdel, unit_format::kPower);
+    df->add_column<std::complex<double>>("Pdel", pdel, unit_format::quantity::power);
 
     exprdf::DataFrameView view;
     view.setDataFrame(df);

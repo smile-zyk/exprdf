@@ -192,6 +192,16 @@ int main() {
         assert(unit_format::format(unit_format::quantity::unitless, 25.0) == "25.00");
         unit_format::register_units("temperature", {{"C", 1.0}});
         assert(unit_format::format("temperature", 25.0) == "25.00 C");
+
+        // Test base_scale and 0 value formatting
+        auto base_freq = unit_format::base_scale(unit_format::quantity::frequency);
+        assert(base_freq.unit_symbol == "Hz");
+        assert(base_freq.scale_factor == 1.0);
+        
+        auto base_unknown = unit_format::base_scale("unknown_quantity");
+        assert(base_unknown.unit_symbol == "?");
+        assert(unit_format::format(unit_format::quantity::frequency, 0.0) == "0 Hz");
+
         std::cout << "PASSED" << std::endl;
 
     // === Test 12: insert_column / prepend_column ===

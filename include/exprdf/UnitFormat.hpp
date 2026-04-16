@@ -111,6 +111,22 @@ class Registry {
     return result + " " + scale.unit_symbol;
   }
 
+  Scale base_scale(const std::string& quantity_name) const {
+    const auto it = unit_systems_.find(quantity_name);
+    if (it == unit_systems_.end() || it->second.empty()) {
+      return Scale(1.0, "?");
+    }
+    const std::vector<UnitDefinition>& units = it->second;
+    const UnitDefinition* base_unit = &units[0];
+    for (const auto& unit : units) {
+      if (unit.factor == 1.0) {
+        base_unit = &unit;
+        break;
+      }
+    }
+    return Scale(base_unit->factor, base_unit->symbol);
+  }
+
   Scale select_scale(const std::string& quantity_name, double value) const {
     const auto it = unit_systems_.find(quantity_name);
     if (it == unit_systems_.end() || it->second.empty()) {
@@ -120,13 +136,7 @@ class Registry {
     const std::vector<UnitDefinition>& units = it->second;
     const double abs_value = std::abs(value);
     if (abs_value == 0.0) {
-      const UnitDefinition* smallest_unit = &units[0];
-      for (const auto& unit : units) {
-        if (unit.factor < smallest_unit->factor) {
-          smallest_unit = &unit;
-        }
-      }
-      return Scale(smallest_unit->factor, smallest_unit->symbol);
+      return base_scale(quantity_name);
     }
 
     const UnitDefinition* best_unit = &units[0];
@@ -246,6 +256,10 @@ inline std::string format(const std::string& quantity_name,
 
 inline Scale scale_for(const std::string& quantity_name, double value) {
   return detail::Registry::instance().select_scale(quantity_name, value);
+}
+
+inline Scale base_scale(const std::string& quantity_name) {
+  return detail::Registry::instance().base_scale(quantity_name);
 }
 
 inline Scale scale_for_range(const std::string& quantity_name, double start,

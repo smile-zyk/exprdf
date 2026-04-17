@@ -164,21 +164,21 @@ int main() {
     // === Test 11: column quantities ===
     std::cout << "\n=== Test 11: column quantities ===" << std::endl;
     DataFrame frame_u;
-    frame_u.add_column<double>("voltage", {1.0, 2.0, 3.0}, unit_format::quantity::voltage);
-    frame_u.add_column<double>("current", {0.1, 0.2, 0.3}, unit_format::quantity::current);
+    frame_u.add_column<double>("voltage", {1.0, 2.0, 3.0}, "voltage");
+    frame_u.add_column<double>("current", {0.1, 0.2, 0.3}, "current");
     frame_u.add_column<int>("index", {1, 2, 3});  // no quantity
-    assert(frame_u.column_quantity("voltage") == unit_format::quantity::voltage);
-    assert(frame_u.column_quantity("current") == unit_format::quantity::current);
+    assert(frame_u.column_quantity("voltage") == "voltage");
+    assert(frame_u.column_quantity("current") == "current");
     assert(frame_u.column_quantity("index") == "");
     frame_u.set_column_quantity("index", "temperature");
     assert(frame_u.column_quantity("index") == "temperature");
     std::cout << frame_u.to_string() << std::endl;
     // slice preserves quantities
     auto slice_u = frame_u.slice(0, 2);
-    assert(slice_u->column_quantity("voltage") == unit_format::quantity::voltage);
+    assert(slice_u->column_quantity("voltage") == "voltage");
     // copy preserves quantities
     auto copy_u = frame_u.copy();
-    assert(copy_u->column_quantity("current") == unit_format::quantity::current);
+    assert(copy_u->column_quantity("current") == "current");
     std::cout << "PASSED" << std::endl;
 
         // === Test 11b: unit_format public API ===
@@ -1163,6 +1163,89 @@ int main() {
         assert(v[5] == 121);
         assert(v[6] == 112);
         assert(v[7] == 111);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 55: loc with -1 wildcard ===
+    std::cout << "\n=== Test 55: loc wildcard (-1) ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("a", {1, 2});
+        df.add_uniform_index<int>("b", {10, 20, 30});
+        df.add_column<double>("v", {1, 2, 3, 4, 5, 6});
+
+        // loc(-1): wildcard on last dim → keep all b values, column b visible
+        auto s1 = df.loc({-1});
+        assert(s1->num_rows() == 6);  // all rows kept
+        assert(s1->num_indices() == 2); // both a and b remain
+        assert(s1->column_names().size() == 3); // a, b, v all present
+
+        // loc(0, -1): fix a=1, wildcard on b
+        auto s2 = df.loc({0, -1});
+        assert(s2->num_rows() == 3);  // a=1: rows 0,1,2
+        assert(s2->num_indices() == 1); // only b remains
+        auto v2 = s2->get_column_as<double>("v");
+        assert(v2[0] == 1.0);
+        assert(v2[1] == 2.0);
+        assert(v2[2] == 3.0);
+        // b column should still be present
+        auto b2 = s2->get_column_as<int>("b");
+        assert(b2[0] == 10);
+        assert(b2[1] == 20);
+        assert(b2[2] == 30);
+
+        // loc(-1, 0): wildcard on a, fix b=10
+        auto s3 = df.loc({-1, 0});
+        assert(s3->num_rows() == 2);  // b=10: rows 0,3
+        assert(s3->num_indices() == 1); // only a remains
+        auto v3 = s3->get_column_as<double>("v");
+        assert(v3[0] == 1.0);
+        assert(v3[1] == 4.0);
+        // a column should be present, b should be excluded
+        auto a3 = s3->get_column_as<int>("a");
+        assert(a3[0] == 1);
+        assert(a3[1] == 2);
+        assert(s3->column_names().size() == 2); // a, v (no b)
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 56: loc wildcard with 3 dimensions ===
+    std::cout << "\n=== Test 56: loc wildcard 3 dims ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<std::string>("x", {"A", "B"});
+        df.add_uniform_index<int>("y", {1, 2});
+        df.add_uniform_index<int>("z", {10, 20});
+        // 2*2*2 = 8 rows
+        df.add_column<int>("val", {1,2,3,4,5,6,7,8});
+
+        // loc(-1, -1): wildcard on y and z → same as loc on x only is impossible
+        // Actually: right-aligned, so -1 maps to y, -1 maps to z
+        // All y and z values kept, columns y and z visible
+        auto s1 = df.loc({-1, -1});
+        assert(s1->num_rows() == 8);
+        assert(s1->num_indices() == 3); // x, y, z all remain
+        assert(s1->column_names().size() == 4); // x, y, z, val
+
+        // loc(0, -1, 1): x=A(0), wildcard on y, z=20(1)
+        auto s2 = df.loc({0, -1, 1});
+        assert(s2->num_rows() == 2); // x=A, z=20: rows (A,1,20)=2, (A,2,20)=4
+        assert(s2->num_indices() == 1); // only y remains
+        auto v2 = s2->get_column_as<int>("val");
+        assert(v2[0] == 2);
+        assert(v2[1] == 4);
+        // y column visible, x and z excluded
+        assert(s2->column_names().size() == 2); // y, val
+
+        // loc(-1, 0, -1): wildcard x, y=1(0), wildcard z
+        auto s3 = df.loc({-1, 0, -1});
+        assert(s3->num_rows() == 4); // y=1: (A,1,10),(A,1,20),(B,1,10),(B,1,20)
+        assert(s3->num_indices() == 2); // x and z remain
+        auto v3 = s3->get_column_as<int>("val");
+        assert(v3[0] == 1);
+        assert(v3[1] == 2);
+        assert(v3[2] == 5);
+        assert(v3[3] == 6);
     }
     std::cout << "PASSED" << std::endl;
 

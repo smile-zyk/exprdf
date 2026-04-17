@@ -681,4 +681,57 @@ v = df_sel["val"]
 assert v == [222,221,212,211,122,121,112,111]
 print("PASSED")
 
+# === Python Test 51: loc with -1 wildcard ===
+print("\n=== Python Test 51: loc wildcard (-1) ===")
+df_w = pdf.DataFrame()
+df_w.add_column("a", [1,1,1,2,2,2])
+df_w.add_column("b", [10,20,30,10,20,30])
+df_w.add_column("v", [1.0,2.0,3.0,4.0,5.0,6.0])
+df_w.set_index("a", "b")
+
+# loc(-1): wildcard on last dim, all rows kept
+s1 = df_w.loc(-1)
+assert s1.num_rows() == 6
+assert s1.num_indices() == 2
+assert len(s1.column_names()) == 3  # a, b, v
+
+# loc(0, -1): fix a=1, wildcard on b
+s2 = df_w.loc(0, -1)
+assert s2.num_rows() == 3
+assert s2.num_indices() == 1
+assert s2["v"] == [1.0, 2.0, 3.0]
+assert s2["b"] == [10, 20, 30]
+
+# loc(-1, 0): wildcard a, fix b=10
+s3 = df_w.loc(-1, 0)
+assert s3.num_rows() == 2
+assert s3.num_indices() == 1
+assert s3["v"] == [1.0, 4.0]
+assert s3["a"] == [1, 2]
+assert len(s3.column_names()) == 2  # a, v (no b)
+print("PASSED")
+
+# === Python Test 52: loc wildcard 3 dims ===
+print("\n=== Python Test 52: loc wildcard 3 dims ===")
+df_w3 = pdf.DataFrame()
+df_w3.add_column("x", ["A","A","A","A","B","B","B","B"])
+df_w3.add_column("y", [1,1,2,2,1,1,2,2])
+df_w3.add_column("z", [10,20,10,20,10,20,10,20])
+df_w3.add_column("val", [1,2,3,4,5,6,7,8])
+df_w3.set_index("x", "y", "z")
+
+# loc(0, -1, 1): x=A, wildcard y, z=20
+s4 = df_w3.loc(0, -1, 1)
+assert s4.num_rows() == 2
+assert s4.num_indices() == 1
+assert s4["val"] == [2, 4]
+assert len(s4.column_names()) == 2  # y, val
+
+# loc(-1, 0, -1): wildcard x, y=1, wildcard z
+s5 = df_w3.loc(-1, 0, -1)
+assert s5.num_rows() == 4
+assert s5.num_indices() == 2  # x and z remain
+assert s5["val"] == [1, 2, 5, 6]
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

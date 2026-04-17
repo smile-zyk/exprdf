@@ -50,7 +50,7 @@ PYBIND11_MODULE(exprdf, m) {
                 for (auto item : data) v.push_back(item.cast<double>());
                 self.add_column<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Add a column (type auto-detected from data: int, float, str, complex)")
 
         // insert_column: insert at position with auto-detect type
@@ -92,7 +92,7 @@ PYBIND11_MODULE(exprdf, m) {
                 for (auto item : data) v.push_back(item.cast<double>());
                 self.insert_column<double>(pos, name, v, quantity);
             }
-        }, py::arg("pos"), py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("pos"), py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Insert a column at position (type auto-detected)")
 
         // prepend_column: insert at beginning with auto-detect type
@@ -134,7 +134,7 @@ PYBIND11_MODULE(exprdf, m) {
                 for (auto item : data) v.push_back(item.cast<double>());
                 self.prepend_column<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Insert a column at the beginning (type auto-detected)")
 
         // get_column: dispatch by stored dtype (by name)
@@ -286,7 +286,7 @@ PYBIND11_MODULE(exprdf, m) {
                 for (auto item : data) v.push_back(item.cast<double>());
                 self.add_uniform_index<double>(name, v, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Add an independent (index) dimension with auto-detected type")
 
         // add_varying_index: auto-detect type from Python list
@@ -318,7 +318,7 @@ PYBIND11_MODULE(exprdf, m) {
                 for (auto item : data) v.push_back(item.cast<double>());
                 self.add_varying_index<double>(name, v, group_size, quantity);
             }
-        }, py::arg("name"), py::arg("data"), py::arg("group_size"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("name"), py::arg("data"), py::arg("group_size"), py::arg("quantity") = "",
            "Add a varying index dimension (values differ per outer-index group)")
 
         // add_varying_index_groups: grouped input, each row-group provides one list
@@ -386,7 +386,7 @@ PYBIND11_MODULE(exprdf, m) {
                 }
                 self.add_varying_index_groups<double>(name, vv, quantity);
             }
-        }, py::arg("name"), py::arg("groups"), py::arg("quantity") = unit_format::quantity::unitless,
+        }, py::arg("name"), py::arg("groups"), py::arg("quantity") = "",
            "Add a varying index dimension from per-group value lists")
 
         .def("num_indices", &exprdf::DataFrame::num_indices,
@@ -459,10 +459,10 @@ PYBIND11_MODULE(exprdf, m) {
              "Decompose flat row index into per-dimension indices (inverse of flat_index)")
 
         .def("loc", [](const exprdf::DataFrame& self, py::args args) {
-            std::vector<std::size_t> indices;
-            for (auto a : args) indices.push_back(a.cast<std::size_t>());
+            std::vector<int64_t> indices;
+            for (auto a : args) indices.push_back(a.cast<int64_t>());
             return self.loc(indices);
-        }, "Multi-index loc: fix innermost N dimensions (right-aligned), return sub-DataFrame")
+        }, "Multi-index loc: fix innermost N dimensions (right-aligned), -1 = wildcard")
 
         .def("sub", &exprdf::DataFrame::sub, py::arg("name"),
              "Extract sub-DataFrame by column name")

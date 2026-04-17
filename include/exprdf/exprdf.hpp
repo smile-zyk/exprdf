@@ -19,7 +19,6 @@
 #include <cassert>
 #include <iomanip>
 #include <fstream>
-#include <exprdf/UnitFormat.hpp>
 
 namespace exprdf {
 
@@ -330,7 +329,7 @@ struct IndexDim {
     template <typename T>
     static IndexDim create_uniform(const std::string& name,
                                    const std::vector<T>& lvls,
-                                   const std::string& quantity = unit_format::quantity::unitless) {
+                                   const std::string& quantity = "") {
         Column col = make_column<T>(lvls);
         col.quantity = quantity;
         return {name, IndexKind::Uniform, col, 0};
@@ -342,7 +341,7 @@ struct IndexDim {
 
     static IndexDim create_varying(const std::string& name,
                                    std::size_t gs,
-                                   const std::string& quantity = unit_format::quantity::unitless) {
+                                   const std::string& quantity = "") {
         Column col;
         col.quantity = quantity;
         return {name, IndexKind::Varying, col, gs};
@@ -357,7 +356,7 @@ public:
 
     template <typename T>
     void add_column(const std::string& name, const std::vector<T>& data,
-                    const std::string& quantity = unit_format::quantity::unitless) {
+                    const std::string& quantity = "") {
         if (!columns_.empty()) {
             if (data.size() != num_rows()) {
                 throw std::invalid_argument(
@@ -377,7 +376,7 @@ public:
     template <typename T>
     void insert_column(std::size_t pos, const std::string& name,
                        const std::vector<T>& data,
-                       const std::string& quantity = unit_format::quantity::unitless) {
+                       const std::string& quantity = "") {
         if (!columns_.empty()) {
             if (data.size() != num_rows()) {
                 throw std::invalid_argument(
@@ -401,7 +400,7 @@ public:
 
     template <typename T>
     void prepend_column(const std::string& name, const std::vector<T>& data,
-                        const std::string& quantity = unit_format::quantity::unitless) {
+                        const std::string& quantity = "") {
         insert_column<T>(0, name, data, quantity);
     }
 
@@ -642,7 +641,7 @@ public:
     // Must be called before any dependent (data) columns are added.
     template <typename T>
     void add_uniform_index(const std::string& name, const std::vector<T>& levels,
-                   const std::string& quantity = unit_format::quantity::unitless) {
+                   const std::string& quantity = "") {
         if (levels.empty())
             throw std::invalid_argument("Index '" + name + "' levels cannot be empty");
         if (has_column(name))
@@ -685,7 +684,7 @@ public:
     void add_varying_index(const std::string& name,
                            const std::vector<T>& values,
                            std::size_t group_size,
-                           const std::string& quantity = unit_format::quantity::unitless) {
+                           const std::string& quantity = "") {
         if (group_size == 0)
             throw std::invalid_argument("group_size cannot be zero");
         if (has_column(name))
@@ -722,7 +721,7 @@ public:
     template <typename T>
     void add_varying_index_groups(const std::string& name,
                                   const std::vector<std::vector<T>>& groups,
-                                  const std::string& quantity = unit_format::quantity::unitless) {
+                                  const std::string& quantity = "") {
         std::size_t old_rows = num_rows();
         if (old_rows == 0)
             throw std::invalid_argument(
@@ -1045,8 +1044,9 @@ public:
     // loc: fix innermost dimensions (right-aligned).
     //   loc({i})   — fix last dim at i
     //   loc({i,j}) — fix last two dims at i, j
-    // Returns sub-DataFrame with remaining outer dimensions.
-    std::shared_ptr<DataFrame> loc(const std::vector<std::size_t>& indices) const {
+    //   -1 = wildcard: keep all values for that dimension (column stays visible)
+    // Returns sub-DataFrame with remaining outer dimensions + wildcard dimensions.
+    std::shared_ptr<DataFrame> loc(const std::vector<int64_t>& indices) const {
         if (indices.empty()) return copy();
         std::size_t n = index_dims_.size();
         std::size_t k = indices.size();
@@ -1059,34 +1059,57 @@ public:
         std::size_t n_outer = n - k;
         auto s = strides();
 
-        // Validate and compute offset within inner block
-        std::size_t offset = 0;
+        // Validate non-wildcard indices
         for (std::size_t i = 0; i < k; ++i) {
             std::size_t dim = n_outer + i;
-            if (indices[i] >= index_dims_[dim].dim_size())
-                throw std::out_of_range(
-                    "Index " + std::to_string(indices[i]) +
-                    " out of range for dimension '" + index_dims_[dim].name + "'");
-            offset += indices[i] * s[dim];
+            if (indices[i] != -1) {
+                if (indices[i] < 0 || static_cast<std::size_t>(indices[i]) >= index_dims_[dim].dim_size())
+                    throw std::out_of_range(
+                        "Index " + std::to_string(indices[i]) +
+                        " out of range for dimension '" + index_dims_[dim].name + "'");
+            }
         }
 
-        // inner_block = product of sizes of fixed dims [n_outer..n-1]
+        // inner_block = product of sizes of dims [n_outer..n-1]
         std::size_t inner_block = 1;
         for (std::size_t i = n_outer; i < n; ++i)
             inner_block *= index_dims_[i].dim_size();
 
+        // Enumerate all offsets within the inner block.
+        // For fixed dims, use the given index; for wildcard (-1), expand over all values.
+        std::vector<std::size_t> offsets = {0};
+        for (std::size_t i = 0; i < k; ++i) {
+            std::size_t dim = n_outer + i;
+            if (indices[i] == -1) {
+                // Wildcard: expand each existing offset by all level values
+                std::vector<std::size_t> expanded;
+                expanded.reserve(offsets.size() * index_dims_[dim].dim_size());
+                for (auto off : offsets)
+                    for (std::size_t v = 0; v < index_dims_[dim].dim_size(); ++v)
+                        expanded.push_back(off + v * s[dim]);
+                offsets = std::move(expanded);
+            } else {
+                // Fixed: add to all existing offsets
+                for (auto& off : offsets)
+                    off += static_cast<std::size_t>(indices[i]) * s[dim];
+            }
+        }
+
         std::size_t outer_count = num_rows() / inner_block;
 
-        // Build gathered row indices (evenly spaced)
+        // Build gathered row indices
         std::vector<std::size_t> row_indices;
-        row_indices.reserve(outer_count);
+        row_indices.reserve(outer_count * offsets.size());
         for (std::size_t j = 0; j < outer_count; ++j)
-            row_indices.push_back(j * inner_block + offset);
+            for (auto off : offsets)
+                row_indices.push_back(j * inner_block + off);
 
-        // Collect names of fixed (inner) index columns to exclude
+        // Collect names of fixed (non-wildcard) inner index columns to exclude
         std::vector<std::string> fixed_names;
-        for (std::size_t i = n_outer; i < n; ++i)
-            fixed_names.push_back(index_dims_[i].name);
+        for (std::size_t i = 0; i < k; ++i) {
+            if (indices[i] != -1)
+                fixed_names.push_back(index_dims_[n_outer + i].name);
+        }
 
         // Build result DataFrame by gathering rows, excluding fixed index columns
         auto result = std::make_shared<DataFrame>();
@@ -1099,16 +1122,20 @@ public:
             result->columns_[name] = gathered;
         }
 
-        // Set remaining (outer) index levels
+        // Set remaining index dims: outer dims + wildcard dims (in order)
         for (std::size_t i = 0; i < n_outer; ++i)
             result->index_dims_.push_back(index_dims_[i]);
+        for (std::size_t i = 0; i < k; ++i) {
+            if (indices[i] == -1)
+                result->index_dims_.push_back(index_dims_[n_outer + i]);
+        }
 
         result->type_ = type_;
         return result;
     }
 
-    std::shared_ptr<DataFrame> loc(std::initializer_list<std::size_t> indices) const {
-        return loc(std::vector<std::size_t>(indices));
+    std::shared_ptr<DataFrame> loc(std::initializer_list<int64_t> indices) const {
+        return loc(std::vector<int64_t>(indices));
     }
 
     // sub: extract a sub-DataFrame by column name.

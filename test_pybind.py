@@ -424,13 +424,13 @@ df34.add_uniform_index("f", [1, 2])
 df34.add_column("v", [10.0, 20.0])
 assert df34.path == ""
 assert df34.type == ""
-assert df34.df_name == ""
+assert df34.name == ""
 df34.path = "/data/test.csv"
 df34.type = "sparam"
-df34.df_name = "S21"
+df34.name = "S21"
 assert df34.path == "/data/test.csv"
 assert df34.type == "sparam"
-assert df34.df_name == "S21"
+assert df34.name == "S21"
 # loc inherits type
 l34 = df34.loc(0)
 assert l34.type == "sparam"

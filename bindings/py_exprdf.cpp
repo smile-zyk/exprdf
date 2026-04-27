@@ -476,7 +476,7 @@ PYBIND11_MODULE(exprdf, m) {
             [](const exprdf::DataFrame& self) { return self.type(); },
             [](exprdf::DataFrame& self, const std::string& v) { self.set_type(v); },
             "Data type tag (inherited by loc/sub)")
-        .def_property("df_name",
+        .def_property("name",
             [](const exprdf::DataFrame& self) { return self.name(); },
             [](exprdf::DataFrame& self, const std::string& v) { self.set_name(v); },
             "DataFrame name");

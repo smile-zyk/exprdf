@@ -551,6 +551,25 @@ public:
         std::size_t nrows = num_rows();
         std::size_t display_rows = max_rows < nrows ? max_rows : nrows;
 
+        // Build row-index labels when multi-index is present (e.g. "0,2,1")
+        bool has_idx = !index_dims_.empty();
+        std::vector<std::string> row_labels;
+        std::size_t idx_col_w = 0;
+        if (has_idx) {
+            for (std::size_t r = 0; r < display_rows; ++r) {
+                std::vector<std::size_t> mi = multi_index(r);
+                std::string label;
+                for (std::size_t d = 0; d < mi.size(); ++d) {
+                    if (d > 0) label += ',';
+                    label += std::to_string(mi[d]);
+                }
+                if (label.size() > idx_col_w) idx_col_w = label.size();
+                row_labels.push_back(label);
+            }
+            // header placeholder width (blank)
+            if (idx_col_w == 0) idx_col_w = 1;
+        }
+
         // Compute column widths
         std::vector<std::size_t> widths;
         for (const auto& name : col_order_) {
@@ -580,6 +599,11 @@ public:
             if (headers[c].size() > widths[c]) widths[c] = headers[c].size();
         }
 
+        // Print header row: optional blank index column first
+        if (has_idx) {
+            for (std::size_t i = 0; i < idx_col_w; ++i) ss << ' ';
+            ss << " | ";
+        }
         for (std::size_t c = 0; c < col_order_.size(); ++c) {
             if (c > 0) ss << " | ";
             ss << std::setw(static_cast<int>(widths[c])) << std::right << headers[c];
@@ -587,6 +611,10 @@ public:
         ss << "\n";
 
         // Separator
+        if (has_idx) {
+            for (std::size_t i = 0; i < idx_col_w; ++i) ss << '-';
+            ss << "-+-";
+        }
         for (std::size_t c = 0; c < col_order_.size(); ++c) {
             if (c > 0) ss << "-+-";
             for (std::size_t i = 0; i < widths[c]; ++i) ss << '-';
@@ -595,6 +623,10 @@ public:
 
         // Rows
         for (std::size_t r = 0; r < display_rows; ++r) {
+            if (has_idx) {
+                ss << std::setw(static_cast<int>(idx_col_w)) << std::right << row_labels[r];
+                ss << " | ";
+            }
             for (std::size_t c = 0; c < col_order_.size(); ++c) {
                 if (c > 0) ss << " | ";
                 auto it = columns_.find(col_order_[c]);

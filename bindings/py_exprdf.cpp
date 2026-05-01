@@ -6,9 +6,13 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(exprdf, m) {
-    m.doc() = "DataFrame C++ library exposed to Python";
+    m.doc() = "exprdf: header-only C++ DataFrame library with multi-index support.\n"
+              "Column types: int, double, str, complex.\n"
+              "Index kinds : Uniform (Cartesian) and Grouped (equal or ragged).";
 
-    // --- IndexDim ---
+    // ----------------------------------------------------------------
+    // IndexDim
+    // ----------------------------------------------------------------
     py::class_<exprdf::IndexDim>(m, "IndexDim")
         .def_property_readonly("name", [](const exprdf::IndexDim& d) { return d.name; })
         .def_property_readonly("kind", [](const exprdf::IndexDim& d) {
@@ -46,6 +50,10 @@ PYBIND11_MODULE(exprdf, m) {
 
     py::class_<exprdf::DataFrame, std::shared_ptr<exprdf::DataFrame>>(m, "DataFrame")
         .def(py::init<>())
+
+        // ----------------------------------------------------------------
+        // Column management
+        // ----------------------------------------------------------------
 
         // add_column: auto-detect type from Python list
         .def("add_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
@@ -173,6 +181,10 @@ PYBIND11_MODULE(exprdf, m) {
         }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Insert a column at the beginning (type auto-detected)")
 
+        // ----------------------------------------------------------------
+        // Element access
+        // ----------------------------------------------------------------
+
         // get_column: dispatch by stored dtype (by name)
         .def("get_column", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
             std::string dt = self.column_dtype(name);
@@ -232,7 +244,9 @@ PYBIND11_MODULE(exprdf, m) {
                 throw std::runtime_error("Unknown dtype: " + dt);
         }, py::arg("col"), py::arg("row"), py::arg("value"), "Set element at (col, row)")
 
-        // General methods
+        // ----------------------------------------------------------------
+        // General DataFrame methods
+        // ----------------------------------------------------------------
         .def("remove_column", &exprdf::DataFrame::remove_column, py::arg("name"))
         .def("has_column", &exprdf::DataFrame::has_column, py::arg("name"))
         .def("column_names", &exprdf::DataFrame::column_names)
@@ -268,6 +282,9 @@ PYBIND11_MODULE(exprdf, m) {
         .def("save_csv", &exprdf::DataFrame::save_csv, py::arg("filename"), py::arg("delimiter") = ',',
              "Write CSV to file")
 
+        // ----------------------------------------------------------------
+        // Python operator overloads
+        // ----------------------------------------------------------------
         .def("__repr__", [](const exprdf::DataFrame& self) {
             return self.to_string();
         })
@@ -291,7 +308,9 @@ PYBIND11_MODULE(exprdf, m) {
             return py::cast(self.sub(name));
         })
 
-        // --- Multi-index ---
+        // ----------------------------------------------------------------
+        // Multi-index construction
+        // ----------------------------------------------------------------
 
         // add_uniform_index: auto-detect type from Python list
         .def("add_uniform_index", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
@@ -418,6 +437,9 @@ PYBIND11_MODULE(exprdf, m) {
         }, py::arg("name"), py::arg("groups"), py::arg("quantity") = "",
            "Add a grouped index dimension where inner group sizes may differ")
 
+        // ----------------------------------------------------------------
+        // Multi-index queries & addressing
+        // ----------------------------------------------------------------
         .def("num_indices", &exprdf::DataFrame::num_indices,
              "Number of independent (index) dimensions")
         .def("index_names", &exprdf::DataFrame::index_names,
@@ -429,7 +451,7 @@ PYBIND11_MODULE(exprdf, m) {
         .def("dependent_names", &exprdf::DataFrame::dependent_names,
              "Names of dependent (data) columns")
 
-        // set_index: promote existing columns to index dimensions
+        // set_index: promote existing columns to index dimensions (auto-infers kind)
         .def("set_index", [](exprdf::DataFrame& self, py::args args) {
             std::vector<std::string> names;
             if (args.size() == 1 && py::isinstance<py::list>(args[0])) {
@@ -468,7 +490,9 @@ PYBIND11_MODULE(exprdf, m) {
         .def("sub", &exprdf::DataFrame::sub, py::arg("name"),
              "Extract sub-DataFrame by column name")
 
-        // --- Metadata ---
+        // ----------------------------------------------------------------
+        // Metadata
+        // ----------------------------------------------------------------
         .def_property("path",
             [](const exprdf::DataFrame& self) { return self.path(); },
             [](exprdf::DataFrame& self, const std::string& v) { self.set_path(v); },

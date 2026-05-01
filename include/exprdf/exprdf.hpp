@@ -1,11 +1,14 @@
 #ifndef EXPRDF_HPP
 #define EXPRDF_HPP
 
-// exprdf.hpp — header-only DataFrame library
+// exprdf.hpp — header-only DataFrame library  (requires C++11)
 //
-// Supports 4 column types: int, double, string, complex<double>.
-// Multi-index (Cartesian product) for N-dimensional parameter sweeps.
-// No RTTI, no virtual dispatch.
+// Column types : int, double, string, complex<double>
+//                (type-erased via ColumnStorageBase / ColumnStorage<T>)
+// Multi-index  : Uniform (Cartesian product) and Grouped (equal or ragged)
+//                dimensions for N-dimensional parameter sweeps.
+// Index API    : add_uniform_index, add_grouped_index, add_grouped_index_groups,
+//                set_index (auto-infers Uniform / Grouped from column data).
 
 #include <string>
 #include <vector>
@@ -44,7 +47,7 @@ template <> struct DTypeTag<double>                 { static const DType value =
 template <> struct DTypeTag<std::string>            { static const DType value = DType::String; };
 template <> struct DTypeTag<std::complex<double>>   { static const DType value = DType::Complex; };
 
-// Approximate equality for floating-point comparisons
+// Floating-point approximate equality (absolute + relative tolerance)
 inline bool approx_equal(double a, double b, double eps = 1e-12) {
     double diff = std::abs(a - b);
     if (diff <= eps) return true;
@@ -57,7 +60,7 @@ inline bool approx_equal(const std::complex<double>& a,
            approx_equal(a.imag(), b.imag(), eps);
 }
 
-// Type-aware equality: approx for floating-point, exact for others
+// Type-aware equality: approximate for floating-point types, exact otherwise
 template <typename T>
 inline bool values_equal(const T& a, const T& b) { return a == b; }
 template <>
@@ -66,265 +69,218 @@ template <>
 inline bool values_equal<std::complex<double>>(const std::complex<double>& a, const std::complex<double>& b) { return approx_equal(a, b); }
 
 // ============================================================
-// Column — tagged union of 4 vector types
+// ColumnStorageBase / ColumnStorage<T> — type-erased column storage
+//
+// ColumnStorageBase  : abstract base; declares all per-element and bulk
+//                      operations needed by Column.
+// ColumnStorage<T>   : concrete template; holds std::vector<T> and
+//                      implements every virtual method.
+// Supported types are those with a DTypeTag<T> specialisation.
+// ============================================================
+
+// Type-to-string helpers (specialised for each supported type)
+template <typename T>
+inline std::string column_val_to_string(const T& v) {
+    std::ostringstream ss; ss << v; return ss.str();
+}
+template <>
+inline std::string column_val_to_string<std::string>(const std::string& v) { return v; }
+template <>
+inline std::string column_val_to_string<std::complex<double>>(const std::complex<double>& v) {
+    std::ostringstream ss;
+    ss << "(" << v.real();
+    if (v.imag() >= 0) ss << "+";
+    ss << v.imag() << "j)";
+    return ss.str();
+}
+
+// Abstract base — type-erased operations on a column's data
+struct ColumnStorageBase {
+    virtual ~ColumnStorageBase() = default;
+    virtual std::size_t size() const = 0;
+    virtual std::string to_string_at(std::size_t row) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_clone() const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_tile(std::size_t n) const = 0;
+    virtual std::shared_ptr<ColumnStorageBase> do_extract_unique() const = 0;
+    virtual bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const = 0;
+};
+
+// Concrete storage for a supported type T.
+// To add a new type: add a DTypeTag<T> specialisation, a DType enum entry,
+// and a make_column<T> explicit instantiation — this template does the rest.
+template <typename T>
+struct ColumnStorage : ColumnStorageBase {
+    std::vector<T> data;
+
+    ColumnStorage() = default;
+    explicit ColumnStorage(const std::vector<T>& v) : data(v) {}
+
+    std::size_t size() const override { return data.size(); }
+
+    std::string to_string_at(std::size_t row) const override {
+        return column_val_to_string<T>(data.at(row));
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_clone() const override {
+        return std::make_shared<ColumnStorage<T>>(data);
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        s->data.assign(data.begin() + start, data.begin() + end);
+        return s;
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        s->data.reserve(data.size() * n);
+        for (const auto& v : data)
+            for (std::size_t i = 0; i < n; ++i) s->data.push_back(v);
+        return s;
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        s->data.reserve(indices.size());
+        for (auto i : indices) s->data.push_back(data.at(i));
+        return s;
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        for (std::size_t i = 0; i < data.size(); ++i)
+            for (std::size_t j = 0; j < counts[i]; ++j) s->data.push_back(data[i]);
+        return s;
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_tile(std::size_t n) const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        s->data.reserve(data.size() * n);
+        for (std::size_t i = 0; i < n; ++i)
+            for (const auto& v : data) s->data.push_back(v);
+        return s;
+    }
+
+    std::shared_ptr<ColumnStorageBase> do_extract_unique() const override {
+        auto s = std::make_shared<ColumnStorage<T>>();
+        for (const auto& v : data) {
+            bool found = false;
+            for (const auto& u : s->data)
+                if (values_equal(u, v)) { found = true; break; }
+            if (!found) s->data.push_back(v);
+        }
+        return s;
+    }
+
+    bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const override {
+        // Caller guarantees same DType tag → same T
+        return values_equal(data[row_a], static_cast<const ColumnStorage<T>&>(other).data[row_b]);
+    }
+};
+
+// ============================================================
+// Column — type-tagged column backed by ColumnStorage<T>
 // ============================================================
 class Column {
 public:
     DType tag;
     std::string quantity;   // quantity key, e.g. "voltage" or "frequency"
 
-    Column() : tag(DType::Int) {}
+    Column() : tag(DType::Int), storage_(std::make_shared<ColumnStorage<int>>()) {}
 
-    // Construction helpers
-    static Column from_int(const std::vector<int>& v)                       { Column c; c.tag = DType::Int; c.ints_ = v; return c; }
-    static Column from_double(const std::vector<double>& v)                 { Column c; c.tag = DType::Double; c.doubles_ = v; return c; }
-    static Column from_string(const std::vector<std::string>& v)            { Column c; c.tag = DType::String; c.strings_ = v; return c; }
-    static Column from_complex(const std::vector<std::complex<double>>& v)  { Column c; c.tag = DType::Complex; c.complexes_ = v; return c; }
-
-    std::size_t size() const {
-        switch (tag) {
-            case DType::Int:           return ints_.size();
-            case DType::Double:        return doubles_.size();
-            case DType::String:        return strings_.size();
-            case DType::Complex:  return complexes_.size();
-        }
-        return 0;
+    // Named construction helpers — prefer the generic make_column<T>() free function.
+    static Column from_int(const std::vector<int>& v) {
+        Column c; c.tag = DType::Int;
+        c.storage_ = std::make_shared<ColumnStorage<int>>(v); return c;
     }
+    static Column from_double(const std::vector<double>& v) {
+        Column c; c.tag = DType::Double;
+        c.storage_ = std::make_shared<ColumnStorage<double>>(v); return c;
+    }
+    static Column from_string(const std::vector<std::string>& v) {
+        Column c; c.tag = DType::String;
+        c.storage_ = std::make_shared<ColumnStorage<std::string>>(v); return c;
+    }
+    static Column from_complex(const std::vector<std::complex<double>>& v) {
+        Column c; c.tag = DType::Complex;
+        c.storage_ = std::make_shared<ColumnStorage<std::complex<double>>>(v); return c;
+    }
+
+    std::size_t size() const { return storage_->size(); }
 
     std::string dtype_name() const { return dtype_to_string(tag); }
 
-    std::string to_string(std::size_t row) const {
-        std::ostringstream ss;
-        switch (tag) {
-            case DType::Int:           ss << ints_.at(row); break;
-            case DType::Double:        ss << doubles_.at(row); break;
-            case DType::String:        return strings_.at(row);
-            case DType::Complex: {
-                const auto& v = complexes_.at(row);
-                ss << "(" << v.real();
-                if (v.imag() >= 0) ss << "+";
-                ss << v.imag() << "j)";
-                break;
-            }
-        }
-        return ss.str();
-    }
+    std::string to_string(std::size_t row) const { return storage_->to_string_at(row); }
 
     Column clone() const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        c.ints_ = ints_;
-        c.doubles_ = doubles_;
-        c.strings_ = strings_;
-        c.complexes_ = complexes_;
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_clone(); return c;
     }
 
     Column slice(std::size_t start, std::size_t end) const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                c.ints_.assign(ints_.begin() + start, ints_.begin() + end); break;
-            case DType::Double:
-                c.doubles_.assign(doubles_.begin() + start, doubles_.begin() + end); break;
-            case DType::String:
-                c.strings_.assign(strings_.begin() + start, strings_.begin() + end); break;
-            case DType::Complex:
-                c.complexes_.assign(complexes_.begin() + start, complexes_.begin() + end); break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_slice(start, end); return c;
     }
 
     // Repeat each element n times: [a,b] repeat_each(3) -> [a,a,a,b,b,b]
     Column repeat_each(std::size_t n) const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                c.ints_.reserve(ints_.size() * n);
-                for (const auto& v : ints_)
-                    for (std::size_t i = 0; i < n; ++i) c.ints_.push_back(v);
-                break;
-            case DType::Double:
-                c.doubles_.reserve(doubles_.size() * n);
-                for (const auto& v : doubles_)
-                    for (std::size_t i = 0; i < n; ++i) c.doubles_.push_back(v);
-                break;
-            case DType::String:
-                c.strings_.reserve(strings_.size() * n);
-                for (const auto& v : strings_)
-                    for (std::size_t i = 0; i < n; ++i) c.strings_.push_back(v);
-                break;
-            case DType::Complex:
-                c.complexes_.reserve(complexes_.size() * n);
-                for (const auto& v : complexes_)
-                    for (std::size_t i = 0; i < n; ++i) c.complexes_.push_back(v);
-                break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_repeat_each(n); return c;
     }
 
     // Gather specific rows by index
     Column gather(const std::vector<std::size_t>& row_indices) const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                c.ints_.reserve(row_indices.size());
-                for (auto i : row_indices) c.ints_.push_back(ints_.at(i));
-                break;
-            case DType::Double:
-                c.doubles_.reserve(row_indices.size());
-                for (auto i : row_indices) c.doubles_.push_back(doubles_.at(i));
-                break;
-            case DType::String:
-                c.strings_.reserve(row_indices.size());
-                for (auto i : row_indices) c.strings_.push_back(strings_.at(i));
-                break;
-            case DType::Complex:
-                c.complexes_.reserve(row_indices.size());
-                for (auto i : row_indices) c.complexes_.push_back(complexes_.at(i));
-                break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_gather(row_indices); return c;
     }
 
     // Repeat each element a variable number of times:
     // [a,b] repeat_variable({3,2}) -> [a,a,a,b,b]
     // counts.size() must equal size()
     Column repeat_variable(const std::vector<std::size_t>& counts) const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                for (std::size_t i = 0; i < ints_.size(); ++i)
-                    for (std::size_t j = 0; j < counts[i]; ++j) c.ints_.push_back(ints_[i]);
-                break;
-            case DType::Double:
-                for (std::size_t i = 0; i < doubles_.size(); ++i)
-                    for (std::size_t j = 0; j < counts[i]; ++j) c.doubles_.push_back(doubles_[i]);
-                break;
-            case DType::String:
-                for (std::size_t i = 0; i < strings_.size(); ++i)
-                    for (std::size_t j = 0; j < counts[i]; ++j) c.strings_.push_back(strings_[i]);
-                break;
-            case DType::Complex:
-                for (std::size_t i = 0; i < complexes_.size(); ++i)
-                    for (std::size_t j = 0; j < counts[i]; ++j) c.complexes_.push_back(complexes_[i]);
-                break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_repeat_variable(counts); return c;
     }
 
     // Tile entire sequence n times: [a,b] tile(3) -> [a,b,a,b,a,b]
     Column tile(std::size_t n) const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                c.ints_.reserve(ints_.size() * n);
-                for (std::size_t i = 0; i < n; ++i)
-                    for (const auto& v : ints_) c.ints_.push_back(v);
-                break;
-            case DType::Double:
-                c.doubles_.reserve(doubles_.size() * n);
-                for (std::size_t i = 0; i < n; ++i)
-                    for (const auto& v : doubles_) c.doubles_.push_back(v);
-                break;
-            case DType::String:
-                c.strings_.reserve(strings_.size() * n);
-                for (std::size_t i = 0; i < n; ++i)
-                    for (const auto& v : strings_) c.strings_.push_back(v);
-                break;
-            case DType::Complex:
-                c.complexes_.reserve(complexes_.size() * n);
-                for (std::size_t i = 0; i < n; ++i)
-                    for (const auto& v : complexes_) c.complexes_.push_back(v);
-                break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_tile(n); return c;
     }
 
     // Extract unique values preserving first-appearance order
     Column extract_unique() const {
-        Column c;
-        c.tag = tag;
-        c.quantity = quantity;
-        switch (tag) {
-            case DType::Int:
-                for (auto& v : ints_)
-                    if (std::find(c.ints_.begin(), c.ints_.end(), v) == c.ints_.end())
-                        c.ints_.push_back(v);
-                break;
-            case DType::Double:
-                for (auto& v : doubles_) {
-                    bool found = false;
-                    for (auto& u : c.doubles_)
-                        if (approx_equal(u, v)) { found = true; break; }
-                    if (!found) c.doubles_.push_back(v);
-                }
-                break;
-            case DType::String:
-                for (auto& v : strings_)
-                    if (std::find(c.strings_.begin(), c.strings_.end(), v) == c.strings_.end())
-                        c.strings_.push_back(v);
-                break;
-            case DType::Complex:
-                for (auto& v : complexes_) {
-                    bool found = false;
-                    for (auto& u : c.complexes_)
-                        if (approx_equal(u, v)) { found = true; break; }
-                    if (!found) c.complexes_.push_back(v);
-                }
-                break;
-        }
-        return c;
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_extract_unique(); return c;
     }
 
     // Compare value at row_a in this column with value at row_b in another column
     bool value_equals(std::size_t row_a, const Column& other, std::size_t row_b) const {
         if (tag != other.tag) return false;
-        switch (tag) {
-            case DType::Int:     return ints_[row_a] == other.ints_[row_b];
-            case DType::Double:  return approx_equal(doubles_[row_a], other.doubles_[row_b]);
-            case DType::String:  return strings_[row_a] == other.strings_[row_b];
-            case DType::Complex: return approx_equal(complexes_[row_a], other.complexes_[row_b]);
-        }
-        return false;
+        return storage_->value_equals_at(row_a, *other.storage_, row_b);
     }
 
-    // Typed accessors (caller must ensure tag matches T)
-    template <typename T> const std::vector<T>& as() const;
-    template <typename T> std::vector<T>& as();
+    // Typed accessors — caller must ensure T matches tag (undefined behaviour otherwise).
+    // Works for any T that has a ColumnStorage<T> specialisation.
+    template <typename T>
+    const std::vector<T>& as() const {
+        return static_cast<const ColumnStorage<T>*>(storage_.get())->data;
+    }
+    template <typename T>
+    std::vector<T>& as() {
+        return static_cast<ColumnStorage<T>*>(storage_.get())->data;
+    }
 
 private:
-    std::vector<int>                    ints_;
-    std::vector<double>                 doubles_;
-    std::vector<std::string>            strings_;
-    std::vector<std::complex<double>>   complexes_;
+    std::shared_ptr<ColumnStorageBase> storage_;
 };
 
-// ============================================================
-// Column — template specializations
-// ============================================================
-template <> inline const std::vector<int>&                    Column::as<int>()                    const { return ints_; }
-template <> inline const std::vector<double>&                 Column::as<double>()                 const { return doubles_; }
-template <> inline const std::vector<std::string>&            Column::as<std::string>()            const { return strings_; }
-template <> inline const std::vector<std::complex<double>>&   Column::as<std::complex<double>>()   const { return complexes_; }
-
-template <> inline std::vector<int>&                    Column::as<int>()                    { return ints_; }
-template <> inline std::vector<double>&                 Column::as<double>()                 { return doubles_; }
-template <> inline std::vector<std::string>&            Column::as<std::string>()            { return strings_; }
-template <> inline std::vector<std::complex<double>>&   Column::as<std::complex<double>>()   { return complexes_; }
-
-// make_column<T>: construct Column from typed vector
+// make_column<T>: construct a Column from a typed vector.
+// Unsupported types produce a compile error (no DTypeTag<T> specialisation).
 template <typename T>
 inline Column make_column(const std::vector<T>& data);
 
@@ -334,47 +290,51 @@ template <> inline Column make_column<std::string>(const std::vector<std::string
 template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return Column::from_complex(v); }
 
 // ============================================================
-// DataFrame — tabular data with optional multi-index
+// IndexKind / IndexDim — multi-index dimension descriptors
 // ============================================================
 
-// Index dimension kind
-// Grouped covers two sub-cases: equal group sizes (all group_lengths equal)
-// and ragged group sizes (variable group_lengths).
+// IndexKind::Uniform  — all outer groups share the same ordered level set;
+//                       supports Cartesian stride arithmetic.
+// IndexKind::Grouped  — inner values can differ per outer group.
+//   Regular Grouped   : all group_lengths are equal (stride arithmetic OK).
+//   Ragged Grouped    : group_lengths differ (no stride arithmetic).
 enum class IndexKind { Uniform, Grouped };
 
-// Index dimension descriptor
+// Index dimension descriptor — one axis of the multi-index.
 struct IndexDim {
     std::string name;
     IndexKind kind;
-    Column levels;                          // Uniform only: unique level values
-    std::vector<std::size_t> group_lengths; // Grouped: per-outer-group inner count
-    std::size_t num_outer = 1;              // Uniform: outer group count (= parent combinations)
-                                            // Grouped: unused (use group_lengths.size())
+    Column levels;                          // Uniform: unique ordered level values
+    std::vector<std::size_t> group_lengths; // Grouped: inner element count per outer group
+    std::size_t num_outer = 1;              // Uniform: number of outer groups
+                                            //          (1 for the outermost dim; product of
+                                            //           parent level counts for inner dims)
+                                            // Grouped: unused — use group_lengths.size()
 
-    // num_groups(): outer group count — semantics are consistent for both kinds.
-    //   Uniform  → num_outer  (1 for the first/outermost dim, product of parent level counts otherwise)
-    //   Grouped  → group_lengths.size()  (always equals parent combinations)
+    // num_groups(): number of outer groups for this dimension.
+    //   Uniform  → num_outer
+    //   Grouped  → group_lengths.size()
     std::size_t num_groups() const {
         return kind == IndexKind::Uniform ? num_outer : group_lengths.size();
     }
 
-    // level_count(): number of levels for stride/flat-index calculations.
-    //   Uniform          → levels.size()  (unique level count)
-    //   Regular Grouped  → group_lengths[0]  (common group size)
-    //   Ragged Grouped   → 0  (do not use in stride math)
+    // level_count(): element count used in stride / flat-index calculations.
+    //   Uniform         → levels.size()        (number of unique levels)
+    //   Regular Grouped → group_lengths[0]     (common group size)
+    //   Ragged Grouped  → 0                    (stride math not applicable)
     std::size_t level_count() const {
         if (kind == IndexKind::Grouped && is_regular_grouped()) return group_lengths[0];
         return levels.size();
     }
 
-    // max_group_length: largest inner size across all grouped groups.
+    // max_group_length(): largest inner size across all grouped groups.
     std::size_t max_group_length() const {
         if (group_lengths.empty()) return 0;
         return *std::max_element(group_lengths.begin(), group_lengths.end());
     }
 
-    // True when all groups have the same inner size ("regular grouped").
-    // Regular grouped dims support stride math — level_count() returns group_lengths[0].
+    // is_regular_grouped(): true when every group has the same inner size.
+    // Regular grouped dimensions support stride arithmetic.
     bool is_regular_grouped() const {
         if (!is_grouped() || group_lengths.empty()) return false;
         for (std::size_t i = 1; i < group_lengths.size(); ++i)
@@ -400,7 +360,7 @@ struct IndexDim {
         return {name, IndexKind::Uniform, lvls, {}, num_outer};
     }
 
-    // Create a Grouped dimension with given per-outer-group lengths.
+    // Create a Grouped dimension; lengths[i] = inner element count for outer group i.
     static IndexDim create_grouped(const std::string& name,
                                    const std::vector<std::size_t>& lengths,
                                    const std::string& quantity = "") {
@@ -410,6 +370,13 @@ struct IndexDim {
     }
 };
 
+// ============================================================
+// DataFrame — tabular data with an optional multi-index
+//
+// Columns are stored in insertion order (col_order_) and looked
+// up by name via an unordered_map.  Index dimensions (index_dims_)
+// describe the multi-dimensional layout of the rows.
+// ============================================================
 class DataFrame {
 public:
     DataFrame() {}
@@ -486,6 +453,7 @@ public:
     }
 
     // --- Column access (by position) ---
+    // Throws std::out_of_range when index >= num_columns().
 
     const std::string& column_name(std::size_t index) const {
         if (index >= col_order_.size()) {
@@ -515,6 +483,7 @@ public:
     }
 
     // --- Column access (by name) ---
+    // Throws std::invalid_argument when the column is not found.
 
     const Column& get_column(const std::string& name) const {
         return get_col(name);
@@ -578,7 +547,7 @@ public:
 
     // --- Row slicing ---
 
-    // slice(start, end): returns rows [start, end)
+    // slice(start, end): returns a new DataFrame with rows [start, end)
     std::shared_ptr<DataFrame> slice(std::size_t start, std::size_t end) const {
         if (start > end || end > num_rows()) {
             throw std::out_of_range("Invalid slice range");
@@ -730,6 +699,7 @@ public:
     }
 
     // --- Copy ---
+    // Returns a deep copy of all columns and index dimensions.
     std::shared_ptr<DataFrame> copy() const {
         auto result = std::make_shared<DataFrame>();
         for (const auto& name : col_order_) {
@@ -746,8 +716,10 @@ public:
 
     // --- Multi-index construction ---
 
-    // Add an index dimension. Existing columns are Cartesian-expanded.
-    // Must be called before any dependent (data) columns are added.
+    // add_uniform_index: append a Uniform dimension.
+    //   All existing row data is Cartesian-expanded (each row repeated levels.size() times).
+    //   Must be called before any dependent (data) columns are added.
+    //   Duplicate levels are rejected.
     template <typename T>
     void add_uniform_index(const std::string& name, const std::vector<T>& levels,
                    const std::string& quantity = "") {
@@ -786,10 +758,10 @@ public:
         index_dims_.push_back(IndexDim::create_uniform(name, levels, quantity, outer));
     }
 
-    // Add a grouped index dimension (equal-sized groups, flat input).
-    // Unlike uniform indices (Cartesian), values can differ per outer-index group.
-    // `values` must have exactly `old_rows * group_size` elements.
-    // The first index dimension must be uniform.
+    // add_grouped_index: append a Regular Grouped dimension (equal-sized groups, flat input).
+    //   values.size() must equal num_rows() * group_size.
+    //   Unlike Uniform, inner values can differ per outer group.
+    //   Cannot be the first dimension (requires an existing outer dimension).
     template <typename T>
     void add_grouped_index(const std::string& name,
                            const std::vector<T>& values,
@@ -826,8 +798,10 @@ public:
         index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(old_rows, group_size), quantity));
     }
 
-    // Add a grouped index dimension from per-group values (group sizes may differ).
-    // groups.size() must equal current row count (the outer dimension must already exist).
+    // add_grouped_index_groups: append a Grouped dimension from per-group value lists.
+    //   groups.size() must equal num_rows() (one list per current outer row).
+    //   Inner lists may differ in size → produces a Ragged Grouped dimension.
+    //   Cannot be the first dimension (requires an existing outer dimension).
     template <typename T>
     void add_grouped_index_groups(const std::string& name,
                                   const std::vector<std::vector<T>>& groups,
@@ -875,7 +849,8 @@ public:
         index_dims_.push_back(IndexDim::create_grouped(name, lengths, quantity));
     }
 
-    // Build a DataFrame from the Cartesian product of index dimensions
+    // from_product: construct a DataFrame from an ordered list of (name, levels) pairs.
+    //   Applies add_uniform_index for each entry in sequence.
     static std::shared_ptr<DataFrame> from_product(
         const std::vector<std::pair<std::string, Column>>& indices) {
         auto df = std::make_shared<DataFrame>();
@@ -900,7 +875,7 @@ public:
 
     // --- Multi-index queries ---
 
-    std::size_t num_indices() const { return index_dims_.size(); }
+    std::size_t num_indices() const { return index_dims_.size(); } // number of index dimensions
 
     std::vector<std::string> index_names() const {
         std::vector<std::string> names;
@@ -938,7 +913,13 @@ public:
 
     // --- Index promotion / demotion ---
 
-    // Promote columns to index dimensions; reorders rows into Cartesian order.
+    // set_index: promote existing columns to index dimensions.
+    //   Automatically infers the IndexKind for each column:
+    //     Uniform         — same values, same lengths, same order across all outer groups
+    //     Regular Grouped — same run lengths across outer groups, but values may differ
+    //     Ragged          — rejected; use add_grouped_index_groups() instead
+    //   Rows are reordered so that the resulting layout is consistent with the inferred dims.
+    //   Fails if the DataFrame already has index dimensions (call reset_index() first).
     // e.g. set_index({"a","b"}) with a=[1,1,1,2,2,2], b=[10,20,30,10,20,30]
     void set_index(const std::vector<std::string>& names) {
         if (names.empty()) return;
@@ -1158,15 +1139,16 @@ public:
         set_index(std::vector<std::string>(names));
     }
 
-    // Demote all index dimensions back to regular columns.
+    // reset_index: demote all index dimensions back to regular data columns.
+    //   Column data is preserved; only the index_dims_ metadata is cleared.
     void reset_index() {
         index_dims_.clear();
     }
 
     // --- Multi-index addressing ---
 
-    // Strides for row-major Cartesian layout (Uniform-only).
-    // Only valid when all dimensions are Uniform.
+    // strides(): row-major strides for Uniform (and Regular Grouped) dimensions.
+    // Result is undefined if any dimension is Ragged Grouped.
     std::vector<std::size_t> strides() const {
         std::size_t n = index_dims_.size();
         if (n == 0) return {};
@@ -1177,9 +1159,8 @@ public:
         return s;
     }
 
-    // Split a contiguous range of row indices into sub-groups of consecutive equal
-    // values in the named column.  Rows must already be contiguous (start..start+len-1).
-    // Returns list of (start_row, length) spans.
+    // split_runs: split rows [start, start+len) into consecutive-equal-value spans.
+    // Returns (start_row, length) pairs in encounter order.
     std::vector<std::pair<std::size_t,std::size_t>>
     split_runs(std::size_t start, std::size_t len, const std::string& col_name) const {
         std::vector<std::pair<std::size_t,std::size_t>> runs;
@@ -1195,11 +1176,13 @@ public:
         return runs;
     }
 
-    // Convert per-dimension position indices → flat row index.
-    // Works for any combination of Uniform and Grouped dimensions.
-    // For Uniform dim d: indices[d] selects among level_count() levels.
-    // For Grouped dim d: indices[d] selects among the sub-groups of the current outer group.
-    // All dimensions must be specified; throws if the position does not exist.
+    // flat_index: convert per-dimension ordinals → flat row index.
+    //   indices.size() must equal num_indices().
+    //   For Uniform dim d   : indices[d] selects among level_count() unique levels.
+    //   For Grouped dim d   : indices[d] selects the i-th consecutive run within the
+    //                          current outer group.
+    //   Uses stride arithmetic when all dims are Uniform/Regular Grouped;
+    //   falls back to a run-scan for ragged layouts.
     std::size_t flat_index(const std::vector<std::size_t>& indices) const {
         if (indices.size() != index_dims_.size())
             throw std::invalid_argument(
@@ -1251,10 +1234,9 @@ public:
         return cur_start;
     }
 
-    // Convert flat row index → per-dimension position indices.
-    // Works for any combination of Uniform and Grouped dimensions.
-    // For each dimension, the returned value is the ordinal of the consecutive-equal
-    // run that contains this row within its outer group.
+    // multi_index: convert a flat row index → per-dimension ordinals (inverse of flat_index).
+    //   For each dimension the returned value is the ordinal of the consecutive-equal
+    //   run that contains 'flat' within its outer group.
     std::vector<std::size_t> multi_index(std::size_t flat) const {
         std::size_t n = index_dims_.size();
         if (n == 0)
@@ -1309,12 +1291,12 @@ public:
 
     // --- Multi-index selection ---
 
-    // loc: fix innermost dimensions (right-aligned).
-    //   loc({i})   — fix last dim at i
-    //   loc({i,j}) — fix last two dims at i, j
-    //   -1 = wildcard: keep all values for that dimension (column stays visible)
-    // Returns sub-DataFrame with remaining outer dimensions + wildcard dimensions.
-    // Grouped dimensions: if a group does not have position i, that group is silently skipped.
+    // loc: select rows by fixing the innermost N index dimensions (right-aligned).
+    //   loc({i})      — fix the last dim at position i
+    //   loc({i, j})   — fix the last two dims at i, j
+    //   -1 (wildcard) — keep all positions for that dimension (column remains in result)
+    //   Grouped dims  : outer groups that do not contain position i are silently dropped.
+    //   Returns a new DataFrame with the outer (unfixed, non-wildcard) dims as its index.
     std::shared_ptr<DataFrame> loc(const std::vector<int64_t>& indices) const {
         if (indices.empty()) return copy();
         std::size_t n = index_dims_.size();
@@ -1502,8 +1484,9 @@ public:
     }
 
     // sub: extract a sub-DataFrame by column name.
-    //   dependent column  → all index columns + that column
-    //   independent column → all outer index columns up to and including it
+    //   Dependent column   → all index columns + the named data column
+    //   Independent column → all index columns up to and including the named dim
+    //                        (collapses inner dimensions, one row per outer group)
     std::shared_ptr<DataFrame> sub(const std::string& name) const {
         if (!has_column(name))
             throw std::invalid_argument("Column '" + name + "' not found");
@@ -1553,7 +1536,7 @@ public:
         }
     }
 
-    // --- Metadata ---
+    // --- Metadata (inherited by loc / sub results) ---
     const std::string& path() const { return path_; }
     void set_path(const std::string& p) { path_ = p; }
 
@@ -1564,6 +1547,7 @@ public:
     void set_name(const std::string& n) { name_ = n; }
 
     // --- CSV export ---
+    // Fields containing the delimiter, double-quotes, or newlines are quoted.
 
     std::string to_csv(char delimiter = ',') const {
         if (columns_.empty()) return "";
@@ -1636,6 +1620,7 @@ public:
     }
 
 private:
+    // Wrap a CSV field in double-quotes if it contains special characters.
     static std::string escape_csv_field(const std::string& field) {
         if (field.find_first_of(",\"\r\n") == std::string::npos) return field;
         std::string escaped = "\"";
@@ -1647,13 +1632,14 @@ private:
         return escaped;
     }
 
-    std::vector<std::string> col_order_;
-    std::unordered_map<std::string, Column> columns_;
-    std::vector<IndexDim> index_dims_;
-    std::string path_;
-    std::string type_;
-    std::string name_;
+    std::vector<std::string> col_order_;          // column names in insertion order
+    std::unordered_map<std::string, Column> columns_; // column data keyed by name
+    std::vector<IndexDim> index_dims_;             // multi-index dimensions (outermost first)
+    std::string path_;                             // source file path (metadata only)
+    std::string type_;                             // data-type tag   (metadata only)
+    std::string name_;                             // dataset name    (metadata only)
 
+    // Internal column lookup; throws std::invalid_argument on miss.
     const Column& get_col(const std::string& name) const {
         auto it = columns_.find(name);
         if (it == columns_.end())

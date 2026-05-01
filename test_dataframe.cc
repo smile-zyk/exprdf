@@ -349,13 +349,13 @@ int main() {
 
         auto& dim_a = mi.get_index_dim(0);
         assert(dim_a.levels.tag == DType::Int);
-        assert(dim_a.dim_size() == 2);
+        assert(dim_a.level_count() == 2);
         assert(dim_a.is_uniform());
 
         auto& dim_b = mi.get_index_dim("b");
         assert(dim_b.levels.tag == DType::String);
         assert(dim_b.levels.as<std::string>()[1] == "y");
-        assert(dim_b.dim_size() == 3);
+        assert(dim_b.level_count() == 3);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -436,10 +436,10 @@ int main() {
 
         // get_index_dim should work
         auto& dim_a = df.get_index_dim("a");
-        assert(dim_a.dim_size() == 2);
+        assert(dim_a.level_count() == 2);
         assert(dim_a.levels.as<int>()[0] == 1 && dim_a.levels.as<int>()[1] == 2);
         auto& dim_b = df.get_index_dim("b");
-        assert(dim_b.dim_size() == 3);
+        assert(dim_b.level_count() == 3);
 
         // loc should work after set_index
         auto sub = df.loc({0}); // fix b=10 (innermost)
@@ -456,33 +456,33 @@ int main() {
     // === Test 22: set_index — validation errors ===
     std::cout << "\n=== Test 22: set_index validation ===" << std::endl;
     {
-        // Invalid grouped layout should fail
+        // a=[1,1,1,2], b=[10,20,30,10]: a=1 has 3 b-values, a=2 has 1 → ragged → throws
         DataFrame df;
         df.add_column<int>("a", {1, 1, 1, 2});
         df.add_column<int>("b", {10, 20, 30, 10});
         df.add_column<double>("v", {1, 2, 3, 4});
-        bool caught = false;
+        bool caught1 = false;
         try { df.set_index({"a", "b"}); }
-        catch (const std::invalid_argument&) { caught = true; }
-        assert(caught);
+        catch (const std::invalid_argument&) { caught1 = true; }
+        assert(caught1);
 
-        // Row count mismatch (wrong number of unique combos)
+        // a=[1,1,2,2,3] (group sizes 2,2,1), b=[10,20,10,20,10]: ragged → throws
         DataFrame df2;
         df2.add_column<int>("a", {1, 1, 2, 2, 3});
         df2.add_column<int>("b", {10, 20, 10, 20, 10});
         df2.add_column<double>("v", {1, 2, 3, 4, 5});
-        caught = false;
+        bool caught2 = false;
         try { df2.set_index({"a", "b"}); }
-        catch (const std::invalid_argument&) { caught = true; }
-        assert(caught);
+        catch (const std::invalid_argument&) { caught2 = true; }
+        assert(caught2);
 
-        // Nonexistent column
+        // Nonexistent column still throws
         DataFrame df3;
         df3.add_column<int>("a", {1, 2});
-        caught = false;
+        bool caught3 = false;
         try { df3.set_index({"nonexistent"}); }
-        catch (const std::invalid_argument&) { caught = true; }
-        assert(caught);
+        catch (const std::invalid_argument&) { caught3 = true; }
+        assert(caught3);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -889,14 +889,14 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 43: add_varying_index basic ===
-    std::cout << "\n=== Test 43: add_varying_index basic ===" << std::endl;
+    // === Test 43: add_grouped_index basic ===
+    std::cout << "\n=== Test 43: add_grouped_index basic ===" << std::endl;
     {
         // bias (Uniform): [1, 2]
-        // freq (Varying, group_size=3): different per bias group
+        // freq (Grouped, uniform_grouped with group_lengths all =3): different per bias group
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index<double>("freq",
+        df.add_grouped_index<double>("freq",
             {1.0, 2.0, 3.0,   // bias=1
              1.5, 2.5, 3.5},  // bias=2
             3, unit_format::quantity::frequency);
@@ -907,12 +907,13 @@ int main() {
         // Check dim info
         auto dim_bias = df.get_index_dim("bias");
         assert(dim_bias.is_uniform());
-        assert(dim_bias.dim_size() == 2);
+        assert(dim_bias.level_count() == 2);
 
         auto dim_freq = df.get_index_dim("freq");
-        assert(dim_freq.is_varying());
-        assert(dim_freq.dim_size() == 3);
-        assert(dim_freq.group_size == 3);
+        assert(dim_freq.is_grouped());
+        assert(dim_freq.is_regular_grouped());
+        assert(dim_freq.num_groups() == 2);
+        assert(dim_freq.group_lengths[0] == 3);
 
         // Verify data layout
         auto bias_col = df.get_column_as<int>("bias");
@@ -931,14 +932,14 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 44: add_varying_index validation ===
-    std::cout << "\n=== Test 44: add_varying_index validation ===" << std::endl;
+    // === Test 44: add_grouped_index validation ===
+    std::cout << "\n=== Test 44: add_grouped_index validation ===" << std::endl;
     {
         // First index cannot be varying
         bool caught = false;
         try {
             DataFrame first;
-            first.add_varying_index<double>("freq", {1.0, 2.0}, 2);
+            first.add_grouped_index<double>("freq", {1.0, 2.0}, 2);
         } catch (const std::invalid_argument&) { caught = true; }
         assert(caught);
 
@@ -948,25 +949,25 @@ int main() {
         // Wrong number of values
         caught = false;
         try {
-            df.add_varying_index<double>("freq", {1.0, 2.0}, 3);
+            df.add_grouped_index<double>("freq", {1.0, 2.0}, 3);
         } catch (const std::invalid_argument&) { caught = true; }
         assert(caught);
 
         // group_size = 0
         caught = false;
         try {
-            df.add_varying_index<double>("freq", {}, 0);
+            df.add_grouped_index<double>("freq", {}, 0);
         } catch (const std::invalid_argument&) { caught = true; }
         assert(caught);
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 45: add_varying_index with loc ===
-    std::cout << "\n=== Test 45: add_varying_index loc ===" << std::endl;
+    // === Test 45: add_grouped_index with loc ===
+    std::cout << "\n=== Test 45: add_grouped_index loc ===" << std::endl;
     {
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index<double>("freq",
+        df.add_grouped_index<double>("freq",
             {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3);
         df.add_column<double>("S11", {-10, -20, -30, -15, -25, -35});
 
@@ -979,12 +980,12 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
-    // === Test 46: add_varying_index_groups ===
-    std::cout << "\n=== Test 46: add_varying_index_groups ===" << std::endl;
+    // === Test 46: add_grouped_index basic ===
+    std::cout << "\n=== Test 46: add_grouped_index basic ===" << std::endl;
     {
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}},
+        df.add_grouped_index<double>("freq", {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3,
                                             unit_format::quantity::frequency);
         assert(df.num_rows() == 6);
         auto freq_col = df.get_column_as<double>("freq");
@@ -998,26 +999,6 @@ int main() {
         auto port_col = df.get_column_as<std::string>("port");
         assert(bias_col[0] == 1 && bias_col[1] == 1);
         assert(port_col[0] == "S11" && port_col[1] == "S21");
-    }
-    std::cout << "PASSED" << std::endl;
-
-    // === Test 47: add_varying_index_groups validation ===
-    std::cout << "\n=== Test 47: add_varying_index_groups validation ===" << std::endl;
-    {
-        DataFrame df;
-        df.add_uniform_index<int>("bias", {1, 2});
-
-        bool caught = false;
-        try {
-            df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}});
-        } catch (const std::invalid_argument&) { caught = true; }
-        assert(caught);
-
-        caught = false;
-        try {
-            df.add_varying_index_groups<double>("freq", {{1.0, 2.0}, {1.5}});
-        } catch (const std::invalid_argument&) { caught = true; }
-        assert(caught);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -1036,9 +1017,10 @@ int main() {
         auto d0 = df.get_index_dim("bias");
         auto d1 = df.get_index_dim("freq");
         auto d2 = df.get_index_dim("port");
-        assert(d0.is_uniform() && d0.dim_size() == 2);
-        assert(d1.is_varying() && d1.group_size == 3);
-        assert(d2.is_uniform() && d2.dim_size() == 2);
+        assert(d0.is_uniform() && d0.level_count() == 2);
+        assert(d1.is_grouped() && d1.is_regular_grouped());
+        assert(d1.group_lengths.size() == 6 && d1.group_lengths[0] == 2);
+        assert(d2.is_uniform() && d2.level_count() == 2);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -1072,9 +1054,10 @@ int main() {
         auto d0 = df.get_index_dim("bias");
         auto d1 = df.get_index_dim("freq");
         auto d2 = df.get_index_dim("port");
-        assert(d0.is_uniform() && d0.dim_size() == 2);
-        assert(d1.is_varying() && d1.group_size == 2);
-        assert(d2.is_uniform() && d2.dim_size() == 2);
+        assert(d0.is_uniform() && d0.level_count() == 2);
+        assert(d1.is_grouped() && d1.is_regular_grouped());
+        assert(d1.group_lengths.size() == 4 && d1.group_lengths[0] == 2);
+        assert(d2.is_uniform() && d2.level_count() == 2);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -1083,18 +1066,18 @@ int main() {
     {
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index_groups<double>("freq", {{1.0, 2.0}, {1.5, 2.5}});
+        df.add_grouped_index<double>("freq", {1.0, 2.0, 1.5, 2.5}, 2);
         // old_rows=4, group_size=2 => values=8
-        df.add_varying_index<double>("temp", {25,30,25,30,26,31,26,31}, 2, "C");
+        df.add_grouped_index<double>("temp", {25,30,25,30,26,31,26,31}, 2, "C");
         df.add_uniform_index<std::string>("port", {"S11", "S21"});
 
         assert(df.num_rows() == 16);
         auto d_freq = df.get_index_dim("freq");
         auto d_temp = df.get_index_dim("temp");
         auto d_port = df.get_index_dim("port");
-        assert(d_freq.is_varying() && d_freq.group_size == 2);
-        assert(d_temp.is_varying() && d_temp.group_size == 2);
-        assert(d_port.is_uniform() && d_port.dim_size() == 2);
+        assert(d_freq.is_grouped() && d_freq.is_regular_grouped() && d_freq.group_lengths[0] == 2);
+        assert(d_temp.is_grouped() && d_temp.is_regular_grouped() && d_temp.group_lengths[0] == 2);
+        assert(d_port.is_uniform() && d_port.level_count() == 2);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -1118,14 +1101,15 @@ int main() {
     {
         DataFrame df;
         df.add_uniform_index<int>("bias", {1, 2});
-        df.add_varying_index_groups<double>("freq", {{1.0, 2.0, 3.0}, {1.5, 2.5, 3.5}});
+        df.add_grouped_index<double>("freq", {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3);
         df.add_uniform_index<std::string>("port", {"S11", "S21"});
         df.add_column<double>("S", {-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36});
 
         df.reset_index();
         df.set_index({"bias", "freq", "port"});
         auto d1 = df.get_index_dim("freq");
-        assert(d1.is_varying() && d1.group_size == 3);
+        assert(d1.is_grouped() && d1.is_regular_grouped());
+        assert(d1.group_lengths.size() == 6 && d1.group_lengths[0] == 2);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -1246,6 +1230,227 @@ int main() {
         assert(v3[1] == 2);
         assert(v3[2] == 5);
         assert(v3[3] == 6);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 57: add_grouped_index_groups basic ===
+    std::cout << "\n=== Test 57: add_grouped_index_groups basic ===" << std::endl;
+    {
+        // level(uniform 2) x number(ragged): level 0 has 3 contours, level 1 has 2 contours
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0,1,2}, {0,1}});
+        // Total rows = 3 + 2 = 5
+        assert(df.num_rows() == 5);
+        assert(df.num_indices() == 2);
+        assert(df.get_index_dim("level").is_uniform());
+        assert(df.get_index_dim("number").is_grouped());
+        assert(df.get_index_dim("number").group_lengths.size() == 2);
+        assert(df.get_index_dim("number").group_lengths[0] == 3);
+        assert(df.get_index_dim("number").group_lengths[1] == 2);
+        // level column: [0,0,0,1,1]
+        auto lv = df.get_column_as<int>("level");
+        assert(lv[0]==0 && lv[1]==0 && lv[2]==0 && lv[3]==1 && lv[4]==1);
+        // number column: [0,1,2,0,1]
+        auto nv = df.get_column_as<int>("number");
+        assert(nv[0]==0 && nv[1]==1 && nv[2]==2 && nv[3]==0 && nv[4]==1);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 58: loc on ragged dimension ===
+    std::cout << "\n=== Test 58: loc on ragged dimension ===" << std::endl;
+    {
+        // level(uniform 2) x number(ragged 3,2) x point(ragged: 2,3,1, 4,2)
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0,1,2},{0,1}});
+        // Points per contour: contour(L0,N0)=2, (L0,N1)=3, (L0,N2)=1, (L1,N0)=4, (L1,N1)=2
+        df.add_grouped_index_groups<int>("point", {{0,1},{0,1,2},{0},{0,1,2,3},{0,1}});
+        // Total rows = 2+3+1+4+2 = 12
+        assert(df.num_rows() == 12);
+
+        // Add a data column
+        std::vector<double> vals(12);
+        for (int i = 0; i < 12; ++i) vals[i] = i * 1.0;
+        df.add_column<double>("x", vals);
+
+        // loc(0): fix point=0 → every contour has pt0: 5 contours → 5 rows
+        auto s0 = df.loc({0});
+        assert(s0->num_rows() == 5);
+        assert(s0->num_indices() == 2); // level + number remain
+
+        // loc(1): fix point=1 → contours with ≥2 pts: (L0,N0)✓3pt,(L0,N1)✓,(L1,N0)✓,(L1,N1)✓; (L0,N2)✗1pt → 4 rows
+        auto s1 = df.loc({1});
+        assert(s1->num_rows() == 4);
+
+        // loc(2): fix point=2 → contours with ≥3 pts: (L0,N1)✓3; (L1,N0)✓4 → 2 rows
+        auto s2 = df.loc({2});
+        assert(s2->num_rows() == 2);
+
+        // loc(0, 0): fix number=0, point=0 → (L0,N0) pt0 + (L1,N0) pt0 → 2 rows
+        auto s00 = df.loc({0, 0});
+        assert(s00->num_rows() == 2);
+        assert(s00->num_indices() == 1); // only level remains
+
+        // loc(2, 0): number=2, point=0 → only (L0,N2) pt0, L1 has no N2 → 1 row
+        auto s20 = df.loc({2, 0});
+        assert(s20->num_rows() == 1);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 59: set_index rejects ragged; manual construction works ===
+    std::cout << "\n=== Test 59: set_index rejects ragged ===" << std::endl;
+    {
+        // level=[0,0,0,1,1], number=[0,1,2,0,1]: group0 has 3 elements, group1 has 2 → ragged
+        // set_index should throw; users must use add_grouped_index_groups for ragged
+        DataFrame df;
+        df.add_column<int>("level",  {0,0,0,1,1});
+        df.add_column<int>("number", {0,1,2,0,1});
+        df.add_column<double>("val", {10,20,30,40,50});
+        bool caught = false;
+        try { df.set_index({"level","number"}); }
+        catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+
+        // Manual construction of the ragged index
+        DataFrame df2;
+        df2.add_uniform_index<int>("level", {0, 1});
+        df2.add_grouped_index_groups<int>("number", {{0,1,2},{0,1}});
+        df2.add_column<double>("val", {10,20,30,40,50});
+        assert(df2.num_indices() == 2);
+        assert(df2.get_index_dim("level").is_uniform());
+        assert(df2.get_index_dim("number").is_grouped());
+        // loc({1}): number=1 in each level group
+        // level=0 group: [0,1,2] → position 1 = row1 (val=20)
+        // level=1 group: [0,1]   → position 1 = row4 (val=50)
+        auto s = df2.loc({1});
+        assert(s->num_rows() == 2);
+        auto vv = s->get_column_as<double>("val");
+        assert(vv[0] == 20.0 && vv[1] == 50.0);
+        // loc({2}): only level=0 group has number=2 (row 2, val=30)
+        auto s2 = df2.loc({2});
+        assert(s2->num_rows() == 1);
+        assert(s2->get_column_as<double>("val")[0] == 30.0);
+        std::cout << df2.to_string() << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 60: set_index rejects ragged (same_lens failure) and accepts regular grouped ===
+    std::cout << "\n=== Test 60: set_index ragged(same_lens) + regular grouped ===" << std::endl;
+    {
+        // Negative: level=[0,0,0,1,1], number=[1,1,1,2,2]
+        // group0 has 1 run of length 3; group1 has 1 run of length 2
+        // same_count=true, same_lens=false → ragged → throw
+        DataFrame df_neg;
+        df_neg.add_column<int>("level",  {0,0,0,1,1});
+        df_neg.add_column<int>("number", {1,1,1,2,2});
+        df_neg.add_column<double>("val", {10,20,30,40,50});
+        bool caught = false;
+        try { df_neg.set_index({"level","number"}); }
+        catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+
+        // Positive: level=[0,0,1,1], number=[1,2,3,4]
+        // group0=[1,2] → runs[(0,1),(1,1)]; group1=[3,4] → runs[(2,1),(3,1)]
+        // same_count=true(2 each), same_lens=true(all 1), same_vals=false → Regular Grouped
+        DataFrame df_pos;
+        df_pos.add_column<int>("level",  {0,0,1,1});
+        df_pos.add_column<int>("number", {1,2,3,4});
+        df_pos.add_column<double>("val", {10,20,30,40});
+        df_pos.set_index({"level","number"});
+        assert(df_pos.num_indices() == 2);
+        assert(df_pos.get_index_dim("level").is_uniform());
+        assert(df_pos.get_index_dim("number").is_grouped());
+        assert(df_pos.get_index_dim("number").is_regular_grouped());
+        std::cout << df_pos.to_string() << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 56: flat_index / multi_index with all-Uniform ==
+    std::cout << "\n=== Test 56: flat_index/multi_index Uniform ===" << std::endl;
+    {
+        // bias(2) x freq(3): 6 rows, row-major
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_uniform_index<int>("freq", {10, 20, 30});
+        df.add_column<int>("v", {0,1,2,3,4,5});
+        // flat_index
+        assert(df.flat_index({0, 0}) == 0);
+        assert(df.flat_index({0, 2}) == 2);
+        assert(df.flat_index({1, 0}) == 3);
+        assert(df.flat_index({1, 2}) == 5);
+        // multi_index
+        assert((df.multi_index(0) == std::vector<std::size_t>{0,0}));
+        assert((df.multi_index(2) == std::vector<std::size_t>{0,2}));
+        assert((df.multi_index(3) == std::vector<std::size_t>{1,0}));
+        assert((df.multi_index(5) == std::vector<std::size_t>{1,2}));
+        // round-trip
+        for (std::size_t r = 0; r < 6; ++r)
+            assert(df.flat_index(df.multi_index(r)) == r);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 57: flat_index / multi_index with Grouped dim ===
+    std::cout << "\n=== Test 57: flat_index/multi_index Grouped ===" << std::endl;
+    {
+        // level(Uniform,2) x number(Grouped): level=0 → [0,1,2], level=1 → [0,1]
+        // rows: (L0,N0),(L0,N1),(L0,N2),(L1,N0),(L1,N1)  →  0,1,2,3,4
+        DataFrame df;
+        df.add_uniform_index<int>("level",  {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0,1,2},{0,1}});
+
+        // flat_index
+        assert(df.flat_index({0, 0}) == 0);
+        assert(df.flat_index({0, 1}) == 1);
+        assert(df.flat_index({0, 2}) == 2);
+        assert(df.flat_index({1, 0}) == 3);
+        assert(df.flat_index({1, 1}) == 4);
+        // level=1 only has 2 numbers → index 2 should throw
+        bool caught = false;
+        try { df.flat_index({1, 2}); } catch (const std::out_of_range&) { caught = true; }
+        assert(caught);
+        // multi_index
+        assert((df.multi_index(0) == std::vector<std::size_t>{0,0}));
+        assert((df.multi_index(2) == std::vector<std::size_t>{0,2}));
+        assert((df.multi_index(3) == std::vector<std::size_t>{1,0}));
+        assert((df.multi_index(4) == std::vector<std::size_t>{1,1}));
+        // round-trip
+        for (std::size_t r = 0; r < 5; ++r)
+            assert(df.flat_index(df.multi_index(r)) == r);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 58: flat_index / multi_index with mixed Uniform+Grouped ===
+    std::cout << "\n=== Test 58: flat_index/multi_index mixed ===" << std::endl;
+    {
+        // bias(Uniform,2) x freq(Grouped,uniform_grouped 3/group) x port(Uniform,2)
+        // rows: bias=1 → freq=1.0,2.0,3.0 each with port=S11,S21 → 6
+        //       bias=2 → freq=1.5,2.5,3.5 each with port=S11,S21 → 6
+        // total 12 rows
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_grouped_index<double>("freq", {1.0,2.0,3.0,1.5,2.5,3.5}, 3);
+        df.add_uniform_index<std::string>("port", {"S11","S21"});
+        df.add_column<int>("v", {0,1,2,3,4,5,6,7,8,9,10,11});
+        assert(df.num_rows() == 12);
+
+        // flat_index: (bias=0,freq=0,port=0) → row 0
+        assert(df.flat_index({0,0,0}) == 0);
+        assert(df.flat_index({0,0,1}) == 1);
+        assert(df.flat_index({0,1,0}) == 2);
+        assert(df.flat_index({0,2,1}) == 5);
+        assert(df.flat_index({1,0,0}) == 6);
+        assert(df.flat_index({1,2,1}) == 11);
+
+        // multi_index
+        assert((df.multi_index(0)  == std::vector<std::size_t>{0,0,0}));
+        assert((df.multi_index(5)  == std::vector<std::size_t>{0,2,1}));
+        assert((df.multi_index(6)  == std::vector<std::size_t>{1,0,0}));
+        assert((df.multi_index(11) == std::vector<std::size_t>{1,2,1}));
+
+        // round-trip for all rows
+        for (std::size_t r = 0; r < 12; ++r)
+            assert(df.flat_index(df.multi_index(r)) == r);
     }
     std::cout << "PASSED" << std::endl;
 

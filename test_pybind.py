@@ -228,12 +228,12 @@ print("PASSED")
 
 print("\n=== Python Test 18: Multi-index get_index_dim ===")
 dim_a = mi.get_index_dim(0)
-assert dim_a["levels"] == [1, 2]
-assert dim_a["dim_size"] == 2
-assert dim_a["kind"] == "uniform"
+assert dim_a.levels == [1, 2]
+assert dim_a.level_count == 2
+assert dim_a.kind == "uniform"
 dim_b = mi.get_index_dim("b")
-assert dim_b["levels"] == [10, 20, 30]
-assert dim_b["dim_size"] == 3
+assert dim_b.levels == [10, 20, 30]
+assert dim_b.level_count == 3
 print("PASSED")
 
 print("\n=== Python Test 19: Multi-index copy preserves index ===")
@@ -288,13 +288,23 @@ assert sub2.at("v", 0) == 2.0
 print("PASSED")
 
 print("\n=== Python Test 22: set_index validation ===")
-# Invalid grouped layout
-df_bad = pdf.DataFrame()
-df_bad.add_column("a", [1, 1, 1, 2])
-df_bad.add_column("b", [10, 20, 30, 10])
-df_bad.add_column("v", [1, 2, 3, 4])
+# a=[1,1,1,2], b=[10,20,30,10]: ragged → should throw with new set_index
+df_v22 = pdf.DataFrame()
+df_v22.add_column("a", [1, 1, 1, 2])
+df_v22.add_column("b", [10, 20, 30, 10])
+df_v22.add_column("v", [1, 2, 3, 4])
+caught_v22 = False
 try:
-    df_bad.set_index("a", "b")
+    df_v22.set_index("a", "b")
+except Exception:
+    caught_v22 = True
+assert caught_v22
+
+# Nonexistent column still raises
+df_bad2 = pdf.DataFrame()
+df_bad2.add_column("a", [1, 2])
+try:
+    df_bad2.set_index("nonexistent")
     assert False, "Should have raised"
 except (RuntimeError, ValueError):
     pass
@@ -512,23 +522,23 @@ df_empty = pdf.DataFrame()
 assert df_empty.to_csv() == ""
 print("PASSED")
 
-# === Python Test 39: add_varying_index basic ===
-print("\n=== Python Test 39: add_varying_index basic ===")
+# === Python Test 39: add_grouped_index basic ===
+print("\n=== Python Test 39: add_grouped_index basic ===")
 df_var = pdf.DataFrame()
 df_var.add_uniform_index("bias", [1, 2])
-df_var.add_varying_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "frequency")
+df_var.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "frequency")
 assert df_var.num_rows() == 6
 assert df_var.num_indices() == 2
 dim_freq = df_var.get_index_dim("freq")
-assert dim_freq["name"] == "freq"
-assert dim_freq["kind"] == "varying"
-assert dim_freq["group_size"] == 3
+assert dim_freq.name == "freq"
+assert dim_freq.kind == "grouped"
+assert dim_freq.group_lengths[0] == 3
 df_var.add_column("S11", [-10.0, -20.0, -30.0, -15.0, -25.0, -35.0])
 print(df_var)
 print("PASSED")
 
-# === Python Test 40: add_varying_index loc ===
-print("\n=== Python Test 40: add_varying_index loc ===")
+# === Python Test 40: add_grouped_index loc ===
+print("\n=== Python Test 40: add_grouped_index loc ===")
 sub_var = df_var.loc(1)  # fix freq at index 1
 assert sub_var.num_rows() == 2
 s11 = sub_var["S11"]
@@ -541,39 +551,20 @@ print("\n=== Python Test 41: first index cannot be varying ===")
 df_first = pdf.DataFrame()
 caught = False
 try:
-    df_first.add_varying_index("freq", [1.0, 2.0], 2)
+    df_first.add_grouped_index("freq", [1.0, 2.0], 2)
 except Exception:
     caught = True
 assert caught
 print("PASSED")
 
-# === Python Test 42: add_varying_index_groups ===
-print("\n=== Python Test 42: add_varying_index_groups ===")
+# === Python Test 42: add_grouped_index basic ===
+print("\n=== Python Test 42: add_grouped_index basic ===")
 df_groups = pdf.DataFrame()
 df_groups.add_uniform_index("bias", [1, 2])
-df_groups.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]], "frequency")
+df_groups.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "frequency")
 assert df_groups.num_rows() == 6
 df_groups.add_uniform_index("port", ["S11", "S21"])
 assert df_groups.num_rows() == 12
-print("PASSED")
-
-# === Python Test 43: add_varying_index_groups validation ===
-print("\n=== Python Test 43: add_varying_index_groups validation ===")
-df_groups_bad = pdf.DataFrame()
-df_groups_bad.add_uniform_index("bias", [1, 2])
-caught = False
-try:
-    df_groups_bad.add_varying_index_groups("freq", [[1.0, 2.0, 3.0]])
-except Exception:
-    caught = True
-assert caught
-
-caught = False
-try:
-    df_groups_bad.add_varying_index_groups("freq", [[1.0, 2.0], [1.5]])
-except Exception:
-    caught = True
-assert caught
 print("PASSED")
 
 # === Python Test 44: set_index auto infer varying in middle ===
@@ -589,9 +580,9 @@ df_mix.set_index("bias", "freq", "port")
 d0 = df_mix.get_index_dim("bias")
 d1 = df_mix.get_index_dim("freq")
 d2 = df_mix.get_index_dim("port")
-assert d0["kind"] == "uniform" and d0["dim_size"] == 2
-assert d1["kind"] == "varying" and d1["group_size"] == 3
-assert d2["kind"] == "uniform" and d2["dim_size"] == 2
+assert d0.kind == "uniform" and d0.level_count == 2
+assert d1.kind == "grouped" and len(d1.group_lengths) == 6 and d1.group_lengths[0] == 2
+assert d2.kind == "uniform" and d2.level_count == 2
 print("PASSED")
 
 # === Python Test 45: set_index keeps unordered uniform behavior ===
@@ -613,23 +604,23 @@ df_mix2.add_column("freq", [1.0,1.0,2.0,2.0,1.5,1.5,2.5,2.5])
 df_mix2.add_column("port", ["S11","S21","S11","S21","S11","S21","S11","S21"])
 df_mix2.add_column("S", [-10,-11,-20,-21,-15,-16,-25,-26])
 df_mix2.set_index("bias", "freq", "port")
-assert df_mix2.get_index_dim("bias")["kind"] == "uniform"
-assert df_mix2.get_index_dim("freq")["kind"] == "varying"
-assert df_mix2.get_index_dim("freq")["group_size"] == 2
-assert df_mix2.get_index_dim("port")["kind"] == "uniform"
+assert df_mix2.get_index_dim("bias").kind == "uniform"
+assert df_mix2.get_index_dim("freq").kind == "grouped"
+assert len(df_mix2.get_index_dim("freq").group_lengths) == 4 and df_mix2.get_index_dim("freq").group_lengths[0] == 2
+assert df_mix2.get_index_dim("port").kind == "uniform"
 print("PASSED")
 
 # === Python Test 47: add two varying plus inner uniform ===
 print("\n=== Python Test 47: add two varying + inner uniform ===")
 df_v2 = pdf.DataFrame()
 df_v2.add_uniform_index("bias", [1, 2])
-df_v2.add_varying_index_groups("freq", [[1.0, 2.0], [1.5, 2.5]])
-df_v2.add_varying_index("temp", [25,30,25,30,26,31,26,31], 2, "temperature")
+df_v2.add_grouped_index("freq", [1.0, 2.0, 1.5, 2.5], 2)
+df_v2.add_grouped_index("temp", [25,30,25,30,26,31,26,31], 2, "temperature")
 df_v2.add_uniform_index("port", ["S11", "S21"])
 assert df_v2.num_rows() == 16
-assert df_v2.get_index_dim("freq")["kind"] == "varying"
-assert df_v2.get_index_dim("temp")["kind"] == "varying"
-assert df_v2.get_index_dim("port")["kind"] == "uniform"
+assert df_v2.get_index_dim("freq").kind == "grouped"
+assert df_v2.get_index_dim("temp").kind == "grouped"
+assert df_v2.get_index_dim("port").kind == "uniform"
 print("PASSED")
 
 # === Python Test 48: set_index invalid mixed blocks ===
@@ -650,13 +641,13 @@ print("PASSED")
 print("\n=== Python Test 49: reset then set_index infer mixed ===")
 df_reset = pdf.DataFrame()
 df_reset.add_uniform_index("bias", [1, 2])
-df_reset.add_varying_index_groups("freq", [[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]])
+df_reset.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3)
 df_reset.add_uniform_index("port", ["S11", "S21"])
 df_reset.add_column("S", [-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36])
 df_reset.reset_index()
 df_reset.set_index("bias", "freq", "port")
-assert df_reset.get_index_dim("freq")["kind"] == "varying"
-assert df_reset.get_index_dim("freq")["group_size"] == 3
+assert df_reset.get_index_dim("freq").kind == "grouped"
+assert len(df_reset.get_index_dim("freq").group_lengths) == 6 and df_reset.get_index_dim("freq").group_lengths[0] == 2
 print("PASSED")
 
 # === Python Test 50: set_index with 1/3/4 columns, keep 2nd as dependent ===
@@ -732,6 +723,136 @@ s5 = df_w3.loc(-1, 0, -1)
 assert s5.num_rows() == 4
 assert s5.num_indices() == 2  # x and z remain
 assert s5["val"] == [1, 2, 5, 6]
+print("PASSED")
+
+# === Test 53: add_grouped_index_groups basic ===
+print("\n=== Test 53: add_grouped_index_groups basic ===")
+df_r = pdf.DataFrame()
+df_r.add_uniform_index("level", [0, 1])
+df_r.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+assert df_r.num_rows() == 5
+assert df_r.num_indices() == 2
+dim_n = df_r.get_index_dim("number")
+assert dim_n.kind == "grouped"
+assert list(dim_n.group_lengths) == [3, 2]
+assert df_r["level"] == [0, 0, 0, 1, 1]
+assert df_r["number"] == [0, 1, 2, 0, 1]
+print("PASSED")
+
+# === Test 54: loc on ragged dimension ===
+print("\n=== Test 54: loc on ragged dimension ===")
+df_r2 = pdf.DataFrame()
+df_r2.add_uniform_index("level", [0, 1])
+df_r2.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+# Points: (L0,N0)=2pts, (L0,N1)=3pts, (L0,N2)=1pt, (L1,N0)=4pts, (L1,N1)=2pts
+df_r2.add_grouped_index_groups("point", [[0, 1], [0, 1, 2], [0], [0, 1, 2, 3], [0, 1]])
+assert df_r2.num_rows() == 12
+
+# loc(0): fix point=0 → every contour has pt0: 5 rows
+s_r0 = df_r2.loc(0)
+assert s_r0.num_rows() == 5
+assert s_r0.num_indices() == 2  # level + number remain
+
+# loc(1): fix point=1 → 4 contours have ≥2 pts (not L0N2): 4 rows
+s_r1 = df_r2.loc(1)
+assert s_r1.num_rows() == 4
+
+# loc(2): fix point=2 → only (L0,N1) and (L1,N0) have ≥3 pts: 2 rows
+s_r2 = df_r2.loc(2)
+assert s_r2.num_rows() == 2
+
+# loc(0, 0): fix number=0, point=0 → (L0,N0,pt0) + (L1,N0,pt0): 2 rows
+s_r00 = df_r2.loc(0, 0)
+assert s_r00.num_rows() == 2
+assert s_r00.num_indices() == 1  # only level remains
+
+# loc(2, 0): number=2, point=0 → only (L0,N2,pt0): 1 row
+s_r20 = df_r2.loc(2, 0)
+assert s_r20.num_rows() == 1
+print("PASSED")
+
+# === Test 55: set_index rejects ragged; manual construction works ===
+print("\n=== Test 55: set_index detects ragged ===")
+df_si = pdf.DataFrame()
+df_si.add_column("level",  [0, 0, 0, 1, 1])
+df_si.add_column("number", [0, 1, 2, 0, 1])
+df_si.add_column("val",    [10.0, 20.0, 30.0, 40.0, 50.0])
+try:
+    df_si.set_index(["level", "number"])
+    assert False, "Expected exception for ragged set_index"
+except Exception:
+    pass  # expected: ragged structure should throw
+
+# Manual construction of ragged index
+df_si2 = pdf.DataFrame()
+df_si2.add_uniform_index("level", [0, 1])
+df_si2.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+df_si2.add_column("val", [10.0, 20.0, 30.0, 40.0, 50.0])
+assert df_si2.num_indices() == 2
+assert df_si2.get_index_dim("level").kind == "uniform"
+assert df_si2.get_index_dim("number").kind == "grouped"
+s_si = df_si2.loc(1)
+assert s_si.num_rows() == 2
+assert s_si["val"] == [20.0, 50.0]
+print("PASSED")
+
+# === Test 56: flat_index / multi_index Uniform ===
+print("\n=== Test 56: flat_index/multi_index Uniform ===")
+df56 = pdf.DataFrame()
+df56.add_uniform_index("bias", [1, 2])
+df56.add_uniform_index("freq", [10, 20, 30])
+df56.add_column("v", list(range(6)))
+assert df56.flat_index([0, 0]) == 0
+assert df56.flat_index([0, 2]) == 2
+assert df56.flat_index([1, 0]) == 3
+assert df56.flat_index([1, 2]) == 5
+assert list(df56.multi_index(0)) == [0, 0]
+assert list(df56.multi_index(3)) == [1, 0]
+assert list(df56.multi_index(5)) == [1, 2]
+for r in range(6):
+    assert df56.flat_index(df56.multi_index(r)) == r
+print("PASSED")
+
+# === Test 57: flat_index / multi_index Grouped ===
+print("\n=== Test 57: flat_index/multi_index Grouped ===")
+df57 = pdf.DataFrame()
+df57.add_uniform_index("level", [0, 1])
+df57.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+assert df57.flat_index([0, 0]) == 0
+assert df57.flat_index([0, 2]) == 2
+assert df57.flat_index([1, 0]) == 3
+assert df57.flat_index([1, 1]) == 4
+try:
+    df57.flat_index([1, 2])
+    assert False, "should raise"
+except Exception:
+    pass
+assert list(df57.multi_index(0)) == [0, 0]
+assert list(df57.multi_index(2)) == [0, 2]
+assert list(df57.multi_index(3)) == [1, 0]
+assert list(df57.multi_index(4)) == [1, 1]
+for r in range(5):
+    assert df57.flat_index(df57.multi_index(r)) == r
+print("PASSED")
+
+# === Test 58: flat_index / multi_index mixed Uniform+Grouped ===
+print("\n=== Test 58: flat_index/multi_index mixed ===")
+df58 = pdf.DataFrame()
+df58.add_uniform_index("bias", [1, 2])
+df58.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3)
+df58.add_uniform_index("port", ["S11", "S21"])
+df58.add_column("v", list(range(12)))
+assert df58.flat_index([0, 0, 0]) == 0
+assert df58.flat_index([0, 0, 1]) == 1
+assert df58.flat_index([0, 2, 1]) == 5
+assert df58.flat_index([1, 0, 0]) == 6
+assert df58.flat_index([1, 2, 1]) == 11
+assert list(df58.multi_index(0))  == [0, 0, 0]
+assert list(df58.multi_index(5))  == [0, 2, 1]
+assert list(df58.multi_index(6))  == [1, 0, 0]
+assert list(df58.multi_index(11)) == [1, 2, 1]
+for r in range(12):
+    assert df58.flat_index(df58.multi_index(r)) == r
 print("PASSED")
 
 print("\n=== ALL PYTHON TESTS PASSED ===")

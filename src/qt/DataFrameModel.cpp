@@ -10,7 +10,7 @@ DataFrameModel::DataFrameModel(QObject* parent)
 {
 }
 
-void DataFrameModel::setDataFrame(std::shared_ptr<DataFrame> df)
+void DataFrameModel::setDataFrame(const std::shared_ptr<DataFrame>& df)
 {
     beginResetModel();
     df_ = df;
@@ -25,6 +25,11 @@ void DataFrameModel::setDataFrame(std::shared_ptr<DataFrame> df)
 std::shared_ptr<DataFrame> DataFrameModel::dataFrame() const
 {
     return df_;
+}
+
+bool DataFrameModel::hasDataFrame() const
+{
+    return static_cast<bool>(df_);
 }
 
 int DataFrameModel::rowCount(const QModelIndex& parent) const
@@ -46,8 +51,9 @@ QVariant DataFrameModel::data(const QModelIndex& index, int role) const
 
     std::size_t row = static_cast<std::size_t>(index.row());
     std::size_t col_idx = static_cast<std::size_t>(index.column());
-    if (row >= df_->num_rows() || col_idx >= df_->num_columns())
+    if (row >= df_->num_rows() || col_idx >= df_->num_columns()) {
         return QVariant();
+    }
 
     const std::string& col_name = df_->column_name(col_idx);
     const Column& col = df_->get_column(col_name);
@@ -62,12 +68,11 @@ QVariant DataFrameModel::headerData(int section, Qt::Orientation orientation,
     if (orientation == Qt::Horizontal) {
         if (section < 0 || static_cast<std::size_t>(section) >= df_->num_columns())
             return QVariant();
-        const std::string& name = df_->column_name(static_cast<std::size_t>(section));
-        return QString::fromStdString(name);
+        return QString::fromStdString(df_->column_name(static_cast<std::size_t>(section)));
     } else {
-        // Vertical header: show multi-index if present, else row number
-        if (section < 0 || static_cast<std::size_t>(section) >= df_->num_rows())
+        if (section < 0 || static_cast<std::size_t>(section) >= df_->num_rows()) {
             return QVariant();
+        }
         return rowHeader(static_cast<std::size_t>(section));
     }
 }
@@ -133,7 +138,6 @@ QString DataFrameModel::rowHeader(std::size_t row) const
     if (df_->num_indices() == 0) {
         return QString::number(static_cast<qlonglong>(row));
     }
-    // Show per-dimension indices: "0,3" for multi_index result
     std::vector<std::size_t> mi = df_->multi_index(row);
     QString header;
     for (std::size_t i = 0; i < mi.size(); ++i) {

@@ -53,10 +53,22 @@ int main(int argc, char* argv[])
     df->add_grouped_index_groups<double>("real_indexs11", real_s11);
     df->add_column<double>("PAE_contours",  pae);
 
+    std::vector<double> pae_abs = pae;
+    for (std::size_t i = 0; i < pae_abs.size(); ++i) {
+        pae_abs[i] = std::fabs(pae_abs[i]);
+    }
+
+    auto df_abs = std::make_shared<exprdf::DataFrame>();
+    df_abs->set_name("PAE | abs(PAE_contours)");
+    df_abs->add_uniform_index<double>("level", {36.654, 41.654});
+    df_abs->add_uniform_index<int>("number", {1});
+    df_abs->add_grouped_index_groups<double>("real_indexs11", real_s11);
+    df_abs->add_column<double>("PAE_contours", pae_abs);
+
     exprdf::DataFrameView view;
-    view.setDataFrame(df);
-    view.setWindowTitle("PAE Contours — grouped index example");
-    view.resize(700, 500);
+    view.setDataFrames({df, df_abs});
+    view.setWindowTitle("PAE Contours — multi DataFrame view");
+    view.resize(900, 700);
     view.show();
 
     return app.exec();

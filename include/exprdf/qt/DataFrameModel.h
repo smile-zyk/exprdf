@@ -12,8 +12,9 @@ class DataFrameModel : public QAbstractTableModel {
 public:
     explicit DataFrameModel(QObject* parent = nullptr);
 
-    void setDataFrame(std::shared_ptr<DataFrame> df);
+    void setDataFrame(const std::shared_ptr<DataFrame>& df);
     std::shared_ptr<DataFrame> dataFrame() const;
+    bool hasDataFrame() const;
 
     // QAbstractTableModel interface
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;

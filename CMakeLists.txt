@@ -5,6 +5,9 @@ project(Template LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+
 # Header-only DataFrame library
 add_library(dataframe INTERFACE)
 target_include_directories(dataframe INTERFACE ${CMAKE_SOURCE_DIR}/include)
@@ -13,7 +16,6 @@ target_include_directories(dataframe INTERFACE ${CMAKE_SOURCE_DIR}/include)
 add_executable(Template main.cc)
 
 # C++ DataFrame test
-enable_testing()
 add_executable(test_dataframe test_dataframe.cc)
 target_link_libraries(test_dataframe PRIVATE dataframe)
 add_test(NAME test_dataframe COMMAND test_dataframe)
@@ -28,6 +30,15 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pybind11)
 pybind11_add_module(exprdf bindings/py_exprdf.cpp)
 target_link_libraries(exprdf PRIVATE dataframe)
+
+add_test(
+    NAME test_pybind
+    COMMAND
+        ${CMAKE_COMMAND} -E env
+        EXPRDF_MODULE_DIR=$<TARGET_FILE_DIR:exprdf>
+        ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/test_pybind.py
+)
 
 # Qt5 DataFrame widget library
 set(CMAKE_AUTOMOC ON)

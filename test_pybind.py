@@ -1,5 +1,55 @@
+import argparse
+import os
 import sys
-sys.path.insert(0, r"c:\dev\cpp_cmake_template\build\Debug")
+from pathlib import Path
+
+
+def _candidate_module_dirs(script_dir: Path):
+    module_dir = os.environ.get("EXPRDF_MODULE_DIR")
+    if module_dir:
+        yield Path(module_dir)
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--module-dir")
+    args, remaining = parser.parse_known_args()
+    sys.argv = [sys.argv[0]] + remaining
+    if args.module_dir:
+        yield Path(args.module_dir)
+
+    build_dir = script_dir / "build"
+    if build_dir.exists():
+        yield build_dir
+        for config_dir in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+            yield build_dir / config_dir
+
+
+def _configure_import_path():
+    script_dir = Path(__file__).resolve().parent
+    candidates = []
+    seen = set()
+
+    for candidate in _candidate_module_dirs(script_dir):
+        resolved = candidate.resolve()
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(resolved)
+
+    for candidate in candidates:
+        if any(candidate.glob("exprdf*.pyd")) or any(candidate.glob("exprdf*.so")):
+            sys.path.insert(0, str(candidate))
+            return
+
+    searched = "\n".join(str(path) for path in candidates) or "<none>"
+    raise ImportError(
+        "Unable to locate the exprdf Python module.\n"
+        "Pass --module-dir, set EXPRDF_MODULE_DIR, or build the module with CMake first.\n"
+        f"Searched:\n{searched}"
+    )
+
+
+_configure_import_path()
 
 import exprdf as pdf
 

@@ -504,5 +504,47 @@ PYBIND11_MODULE(exprdf, m) {
         .def_property("name",
             [](const exprdf::DataFrame& self) { return self.name(); },
             [](exprdf::DataFrame& self, const std::string& v) { self.set_name(v); },
-            "DataFrame name");
+            "DataFrame name")
+
+        // ----------------------------------------------------------------
+        // Arithmetic operators (operate on the last column)
+        // ----------------------------------------------------------------
+        .def("__add__", [](const exprdf::DataFrame& self, const exprdf::DataFrame& other) {
+            return self + other;
+        }, py::arg("other"), "Element-wise add of last columns (df + df)")
+        .def("__sub__", [](const exprdf::DataFrame& self, const exprdf::DataFrame& other) {
+            return self - other;
+        }, py::arg("other"), "Element-wise subtract of last columns (df - df)")
+        .def("__mul__", [](const exprdf::DataFrame& self, const exprdf::DataFrame& other) {
+            return self * other;
+        }, py::arg("other"), "Element-wise multiply of last columns (df * df)")
+        .def("__truediv__", [](const exprdf::DataFrame& self, const exprdf::DataFrame& other) {
+            return self / other;
+        }, py::arg("other"), "Element-wise divide of last columns (df / df)")
+        // scalar on right
+        .def("__add__", [](const exprdf::DataFrame& self, double s) {
+            return self + s;
+        }, py::arg("scalar"), "Add scalar to last column (df + scalar)")
+        .def("__sub__", [](const exprdf::DataFrame& self, double s) {
+            return self - s;
+        }, py::arg("scalar"), "Subtract scalar from last column (df - scalar)")
+        .def("__mul__", [](const exprdf::DataFrame& self, double s) {
+            return self * s;
+        }, py::arg("scalar"), "Multiply last column by scalar (df * scalar)")
+        .def("__truediv__", [](const exprdf::DataFrame& self, double s) {
+            return self / s;
+        }, py::arg("scalar"), "Divide last column by scalar (df / scalar)")
+        // scalar on left
+        .def("__radd__", [](const exprdf::DataFrame& self, double s) {
+            return self + s;
+        }, py::arg("scalar"), "Add scalar to last column (scalar + df)")
+        .def("__rmul__", [](const exprdf::DataFrame& self, double s) {
+            return self * s;
+        }, py::arg("scalar"), "Multiply last column by scalar (scalar * df)")
+        .def("__rsub__", [](const exprdf::DataFrame& self, double s) {
+            return s - self;
+        }, py::arg("scalar"), "scalar - df on last column")
+        .def("__rtruediv__", [](const exprdf::DataFrame& self, double s) {
+            return s / self;
+        }, py::arg("scalar"), "scalar / df on last column");
 }

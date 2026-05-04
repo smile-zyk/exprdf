@@ -1,7 +1,7 @@
 #ifndef EXPRDF_HPP
 #define EXPRDF_HPP
 
-// exprdf.hpp — header-only DataFrame library  (requires C++11)
+// exprdf.hpp -- header-only DataFrame library  (requires C++11)
 //
 // Column types : int, double, string, complex<double>
 //                (type-erased via ColumnStorageBase / ColumnStorage<T>)
@@ -26,7 +26,7 @@
 namespace exprdf {
 
 // ============================================================
-// DType — column type tag
+// DType -- column type tag
 // ============================================================
 enum class DType { Int, Double, String, Complex };
 
@@ -69,7 +69,7 @@ template <>
 inline bool values_equal<std::complex<double>>(const std::complex<double>& a, const std::complex<double>& b) { return approx_equal(a, b); }
 
 // ============================================================
-// ColumnStorageBase / ColumnStorage<T> — type-erased column storage
+// ColumnStorageBase / ColumnStorage<T> -- type-erased column storage
 //
 // ColumnStorageBase  : abstract base; declares all per-element and bulk
 //                      operations needed by Column.
@@ -94,7 +94,7 @@ inline std::string column_val_to_string<std::complex<double>>(const std::complex
     return ss.str();
 }
 
-// Abstract base — type-erased operations on a column's data
+// Abstract base -- type-erased operations on a column's data
 struct ColumnStorageBase {
     virtual ~ColumnStorageBase() = default;
     virtual std::size_t size() const = 0;
@@ -111,7 +111,7 @@ struct ColumnStorageBase {
 
 // Concrete storage for a supported type T.
 // To add a new type: add a DTypeTag<T> specialisation, a DType enum entry,
-// and a make_column<T> explicit instantiation — this template does the rest.
+// and a make_column<T> explicit instantiation -- this template does the rest.
 template <typename T>
 struct ColumnStorage : ColumnStorageBase {
     std::vector<T> data;
@@ -177,13 +177,13 @@ struct ColumnStorage : ColumnStorageBase {
     }
 
     bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const override {
-        // Caller guarantees same DType tag → same T
+        // Caller guarantees same DType tag -> same T
         return values_equal(data[row_a], static_cast<const ColumnStorage<T>&>(other).data[row_b]);
     }
 };
 
 // ============================================================
-// Column — type-tagged column backed by ColumnStorage<T>
+// Column -- type-tagged column backed by ColumnStorage<T>
 // ============================================================
 class Column {
 public:
@@ -192,7 +192,7 @@ public:
 
     Column() : tag(DType::Int), storage_(std::make_shared<ColumnStorage<int>>()) {}
 
-    // Named construction helpers — prefer the generic make_column<T>() free function.
+    // Named construction helpers -- prefer the generic make_column<T>() free function.
     static Column from_int(const std::vector<int>& v) {
         Column c; c.tag = DType::Int;
         c.storage_ = std::make_shared<ColumnStorage<int>>(v); return c;
@@ -264,7 +264,7 @@ public:
         return storage_->value_equals_at(row_a, *other.storage_, row_b);
     }
 
-    // Typed accessors — caller must ensure T matches tag (undefined behaviour otherwise).
+    // Typed accessors -- caller must ensure T matches tag (undefined behaviour otherwise).
     // Works for any T that has a ColumnStorage<T> specialisation.
     template <typename T>
     const std::vector<T>& as() const {
@@ -290,17 +290,17 @@ template <> inline Column make_column<std::string>(const std::vector<std::string
 template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return Column::from_complex(v); }
 
 // ============================================================
-// IndexKind / IndexDim — multi-index dimension descriptors
+// IndexKind / IndexDim -- multi-index dimension descriptors
 // ============================================================
 
-// IndexKind::Uniform  — all outer groups share the same ordered level set;
+// IndexKind::Uniform  -- all outer groups share the same ordered level set;
 //                       supports Cartesian stride arithmetic.
-// IndexKind::Grouped  — inner values can differ per outer group.
+// IndexKind::Grouped  -- inner values can differ per outer group.
 //   Regular Grouped   : all group_lengths are equal (stride arithmetic OK).
 //   Ragged Grouped    : group_lengths differ (no stride arithmetic).
 enum class IndexKind { Uniform, Grouped };
 
-// Index dimension descriptor — one axis of the multi-index.
+// Index dimension descriptor -- one axis of the multi-index.
 struct IndexDim {
     std::string name;
     IndexKind kind;
@@ -309,19 +309,19 @@ struct IndexDim {
     std::size_t num_outer = 1;              // Uniform: number of outer groups
                                             //          (1 for the outermost dim; product of
                                             //           parent level counts for inner dims)
-                                            // Grouped: unused — use group_lengths.size()
+                                            // Grouped: unused -- use group_lengths.size()
 
     // num_groups(): number of outer groups for this dimension.
-    //   Uniform  → num_outer
-    //   Grouped  → group_lengths.size()
+    //   Uniform  -> num_outer
+    //   Grouped  -> group_lengths.size()
     std::size_t num_groups() const {
         return kind == IndexKind::Uniform ? num_outer : group_lengths.size();
     }
 
     // level_count(): element count used in stride / flat-index calculations.
-    //   Uniform         → levels.size()        (number of unique levels)
-    //   Regular Grouped → group_lengths[0]     (common group size)
-    //   Ragged Grouped  → 0                    (stride math not applicable)
+    //   Uniform         -> levels.size()        (number of unique levels)
+    //   Regular Grouped -> group_lengths[0]     (common group size)
+    //   Ragged Grouped  -> 0                    (stride math not applicable)
     std::size_t level_count() const {
         if (kind == IndexKind::Grouped && is_regular_grouped()) return group_lengths[0];
         return levels.size();
@@ -371,7 +371,7 @@ struct IndexDim {
 };
 
 // ============================================================
-// DataFrame — tabular data with an optional multi-index
+// DataFrame -- tabular data with an optional multi-index
 //
 // Columns are stored in insertion order (col_order_) and looked
 // up by name via an unordered_map.  Index dimensions (index_dims_)
@@ -800,7 +800,7 @@ public:
 
     // add_grouped_index_groups: append a Grouped dimension from per-group value lists.
     //   groups.size() must equal num_rows() (one list per current outer row).
-    //   Inner lists may differ in size → produces a Ragged Grouped dimension.
+    //   Inner lists may differ in size -> produces a Ragged Grouped dimension.
     //   Cannot be the first dimension (requires an existing outer dimension).
     template <typename T>
     void add_grouped_index_groups(const std::string& name,
@@ -915,9 +915,9 @@ public:
 
     // set_index: promote existing columns to index dimensions.
     //   Automatically infers the IndexKind for each column:
-    //     Uniform         — same values, same lengths, same order across all outer groups
-    //     Regular Grouped — same run lengths across outer groups, but values may differ
-    //     Ragged          — rejected; use add_grouped_index_groups() instead
+    //     Uniform         -- same values, same lengths, same order across all outer groups
+    //     Regular Grouped -- same run lengths across outer groups, but values may differ
+    //     Ragged          -- rejected; use add_grouped_index_groups() instead
     //   Rows are reordered so that the resulting layout is consistent with the inferred dims.
     //   Fails if the DataFrame already has index dimensions (call reset_index() first).
     // e.g. set_index({"a","b"}) with a=[1,1,1,2,2,2], b=[10,20,30,10,20,30]
@@ -988,7 +988,7 @@ public:
                 if (target_used[flat])
                     throw std::invalid_argument(
                         "Duplicate index combination at row " + std::to_string(r) +
-                        " — data is not a valid Cartesian product");
+                        " -- data is not a valid Cartesian product");
                 target_used[flat] = true;
                 perm[flat] = r;
             }
@@ -996,7 +996,7 @@ public:
             for (std::size_t i = 0; i < nrows; ++i) {
                 if (!target_used[i])
                     throw std::invalid_argument(
-                        "Missing index combination — data is not a valid Cartesian product");
+                        "Missing index combination -- data is not a valid Cartesian product");
             }
 
             bool is_identity = true;
@@ -1176,7 +1176,7 @@ public:
         return runs;
     }
 
-    // flat_index: convert per-dimension ordinals → flat row index.
+    // flat_index: convert per-dimension ordinals -> flat row index.
     //   indices.size() must equal num_indices().
     //   For Uniform dim d   : indices[d] selects among level_count() unique levels.
     //   For Grouped dim d   : indices[d] selects the i-th consecutive run within the
@@ -1234,7 +1234,7 @@ public:
         return cur_start;
     }
 
-    // multi_index: convert a flat row index → per-dimension ordinals (inverse of flat_index).
+    // multi_index: convert a flat row index -> per-dimension ordinals (inverse of flat_index).
     //   For each dimension the returned value is the ordinal of the consecutive-equal
     //   run that contains 'flat' within its outer group.
     std::vector<std::size_t> multi_index(std::size_t flat) const {
@@ -1292,9 +1292,9 @@ public:
     // --- Multi-index selection ---
 
     // loc: select rows by fixing the innermost N index dimensions (right-aligned).
-    //   loc({i})      — fix the last dim at position i
-    //   loc({i, j})   — fix the last two dims at i, j
-    //   -1 (wildcard) — keep all positions for that dimension (column remains in result)
+    //   loc({i})      -- fix the last dim at position i
+    //   loc({i, j})   -- fix the last two dims at i, j
+    //   -1 (wildcard) -- keep all positions for that dimension (column remains in result)
     //   Grouped dims  : outer groups that do not contain position i are silently dropped.
     //   Returns a new DataFrame with the outer (unfixed, non-wildcard) dims as its index.
     std::shared_ptr<DataFrame> loc(const std::vector<int64_t>& indices) const {
@@ -1445,7 +1445,7 @@ public:
                     std::size_t pos = static_cast<std::size_t>(idx);
                     if (pos < subs.size())
                         next.push_back(std::move(subs[pos]));
-                    // else: this group has no position pos → silently skip
+                    // else: this group has no position pos -> silently skip
                 }
             }
             cur_groups = std::move(next);
@@ -1484,8 +1484,8 @@ public:
     }
 
     // sub: extract a sub-DataFrame by column name.
-    //   Dependent column   → all index columns + the named data column
-    //   Independent column → all index columns up to and including the named dim
+    //   Dependent column   -> all index columns + the named data column
+    //   Independent column -> all index columns up to and including the named dim
     //                        (collapses inner dimensions, one row per outer group)
     std::shared_ptr<DataFrame> sub(const std::string& name) const {
         if (!has_column(name))
@@ -1619,7 +1619,198 @@ public:
         return rename(col_order_.size() - 1, new_name);
     }
 
+    // --- Arithmetic operators (operate on the last column) ---
+    // df1 + df2 : element-wise add of the last columns; result is a copy of *this.
+    // Both DataFrames must have equal num_rows() and the same last-column dtype.
+    // Scalar overloads accept double; int columns truncate the result back to int.
+    std::shared_ptr<DataFrame> operator+(const DataFrame& o) const {
+        return apply_binary_op_last(o, Arith_Add());
+    }
+    std::shared_ptr<DataFrame> operator-(const DataFrame& o) const {
+        return apply_binary_op_last(o, Arith_Sub());
+    }
+    std::shared_ptr<DataFrame> operator*(const DataFrame& o) const {
+        return apply_binary_op_last(o, Arith_Mul());
+    }
+    std::shared_ptr<DataFrame> operator/(const DataFrame& o) const {
+        return apply_binary_op_last(o, Arith_Div());
+    }
+
+    std::shared_ptr<DataFrame> operator+(double s) const {
+        return apply_scalar_op_last(s, Arith_Add());
+    }
+    std::shared_ptr<DataFrame> operator-(double s) const {
+        return apply_scalar_op_last(s, Arith_Sub());
+    }
+    std::shared_ptr<DataFrame> operator*(double s) const {
+        return apply_scalar_op_last(s, Arith_Mul());
+    }
+    std::shared_ptr<DataFrame> operator/(double s) const {
+        return apply_scalar_op_last(s, Arith_Div());
+    }
+
+    // Scalar on left (commutative: +, *; non-commutative: -, /)
+    friend std::shared_ptr<DataFrame> operator+(double s, const DataFrame& df) { return df + s; }
+    friend std::shared_ptr<DataFrame> operator*(double s, const DataFrame& df) { return df * s; }
+    friend std::shared_ptr<DataFrame> operator-(double s, const DataFrame& df) {
+        return df.apply_scalar_op_last(s, Arith_SubR());
+    }
+    friend std::shared_ptr<DataFrame> operator/(double s, const DataFrame& df) {
+        return df.apply_scalar_op_last(s, Arith_DivR());
+    }
+
 private:
+    // --- C++11 arithmetic function objects (replaces C++14 generic lambdas) ---
+    struct Arith_Add { template<typename T> T operator()(T a, T b) const { return a + b; } };
+    struct Arith_Sub { template<typename T> T operator()(T a, T b) const { return a - b; } };
+    struct Arith_Mul { template<typename T> T operator()(T a, T b) const { return a * b; } };
+    struct Arith_Div { template<typename T> T operator()(T a, T b) const { return a / b; } };
+    struct Arith_SubR { template<typename T> T operator()(T a, T b) const { return b - a; } }; // s - df
+    struct Arith_DivR { template<typename T> T operator()(T a, T b) const { return b / a; } }; // s / df
+
+    // --- Arithmetic helpers ---
+
+    // Numeric type promotion rank: Int(0) < Double(1) < Complex(2); String is rejected.
+    static int numeric_rank(DType t) {
+        switch (t) {
+            case DType::Int:     return 0;
+            case DType::Double:  return 1;
+            case DType::Complex: return 2;
+            default:             return -1; // String
+        }
+    }
+
+    // Widen a numeric column to std::vector<double>; rejects String/Complex columns.
+    static std::vector<double> to_double_vec(const Column& col) {
+        if (col.tag == DType::Int) {
+            const auto& src = col.as<int>();
+            return std::vector<double>(src.begin(), src.end());
+        }
+        if (col.tag == DType::Double) return col.as<double>();
+        throw std::invalid_argument(
+            "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to double");
+    }
+
+    // Widen a numeric column to std::vector<complex<double>>; rejects String.
+    static std::vector<std::complex<double>> to_complex_vec(const Column& col) {
+        using C = std::complex<double>;
+        if (col.tag == DType::Int) {
+            const auto& src = col.as<int>();
+            std::vector<C> v; v.reserve(src.size());
+            for (auto x : src) v.emplace_back(static_cast<double>(x), 0.0);
+            return v;
+        }
+        if (col.tag == DType::Double) {
+            const auto& src = col.as<double>();
+            std::vector<C> v; v.reserve(src.size());
+            for (auto x : src) v.emplace_back(x, 0.0);
+            return v;
+        }
+        if (col.tag == DType::Complex) return col.as<C>();
+        throw std::invalid_argument(
+            "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to complex");
+    }
+
+    // Replace the last column of a DataFrame copy with a new column of possibly different type.
+    void replace_last_column(const std::string& name, Column new_col) {
+        new_col.quantity = get_col(name).quantity;
+        columns_[name] = std::move(new_col);
+    }
+
+    // Apply element-wise binary op between last column of *this and last column of o.
+    // Supports numeric type promotion: int op double -> double, * op complex -> complex.
+    // String columns are always rejected.
+    template<typename Op>
+    std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& o, Op op) const {
+        if (col_order_.empty())
+            throw std::invalid_argument("DataFrame has no columns");
+        if (o.col_order_.empty())
+            throw std::invalid_argument("Other DataFrame has no columns");
+        if (num_rows() != o.num_rows())
+            throw std::invalid_argument(
+                "Row count mismatch: " + std::to_string(num_rows()) +
+                " vs " + std::to_string(o.num_rows()));
+        const std::string& ln = col_order_.back();
+        const Column& ca = get_col(ln);
+        const Column& cb = o.get_col(o.col_order_.back());
+
+        int ra = numeric_rank(ca.tag), rb = numeric_rank(cb.tag);
+        if (ra < 0 || rb < 0)
+            throw std::invalid_argument("Arithmetic on string columns is not supported");
+
+        // Determine the promoted result type
+        DType rt = (ra >= rb) ? ca.tag : cb.tag;
+
+        auto result = copy();
+
+        if (rt == DType::Int) {
+            // Both must be int (rank 0 == 0)
+            auto& va = result->get_col(ln).as<int>();
+            const auto& vb = cb.as<int>();
+            for (std::size_t i = 0; i < va.size(); ++i) va[i] = op(va[i], vb[i]);
+        } else if (rt == DType::Double) {
+            std::vector<double> va = to_double_vec(ca);
+            std::vector<double> vb = to_double_vec(cb);
+            std::vector<double> vc(va.size());
+            for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
+            Column nc = make_column<double>(vc);
+            nc.quantity = ca.quantity;
+            result->columns_[ln] = std::move(nc);
+        } else { // Complex
+            using C = std::complex<double>;
+            std::vector<C> va = to_complex_vec(ca);
+            std::vector<C> vb = to_complex_vec(cb);
+            std::vector<C> vc(va.size());
+            for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
+            Column nc = make_column<C>(vc);
+            nc.quantity = ca.quantity;
+            result->columns_[ln] = std::move(nc);
+        }
+        return result;
+    }
+
+    // Apply element-wise scalar op on last column.
+    // Type promotion rules (scalar is always double):
+    //   int    -> result is double (scalar promotes int column to double)
+    //   double -> result is double
+    //   complex-> result is complex (scalar is widened to complex(s, 0))
+    //   string -> throws
+    template<typename Op>
+    std::shared_ptr<DataFrame> apply_scalar_op_last(double s, Op op) const {
+        if (col_order_.empty())
+            throw std::invalid_argument("DataFrame has no columns");
+        const std::string& ln = col_order_.back();
+        const Column& cc = get_col(ln);
+        auto result = copy();
+        switch (cc.tag) {
+            case DType::Int: {
+                // Promote int -> double
+                const auto& src = cc.as<int>();
+                std::vector<double> vc(src.size());
+                for (std::size_t i = 0; i < src.size(); ++i)
+                    vc[i] = op(static_cast<double>(src[i]), s);
+                Column nc = make_column<double>(vc);
+                nc.quantity = cc.quantity;
+                result->columns_[ln] = std::move(nc);
+                break;
+            }
+            case DType::Double: {
+                auto& ra = result->get_col(ln).as<double>();
+                for (auto& v : ra) v = op(v, s);
+                break;
+            }
+            case DType::Complex: {
+                auto& ra = result->get_col(ln).as<std::complex<double>>();
+                for (auto& v : ra) v = op(v, std::complex<double>(s, 0.0));
+                break;
+            }
+            case DType::String:
+                throw std::invalid_argument(
+                    "Arithmetic on string columns is not supported");
+        }
+        return result;
+    }
+
     // Wrap a CSV field in double-quotes if it contains special characters.
     static std::string escape_csv_field(const std::string& field) {
         if (field.find_first_of(",\"\r\n") == std::string::npos) return field;

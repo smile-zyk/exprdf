@@ -905,4 +905,122 @@ for r in range(12):
     assert df58.flat_index(df58.multi_index(r)) == r
 print("PASSED")
 
+print("\n=== Python Test A1: Arithmetic operators — df op df ===")
+df_a = pdf.DataFrame()
+df_a.add_column("x", [1.0, 2.0, 3.0])
+df_a.add_column("v", [10.0, 20.0, 30.0])
+df_b = pdf.DataFrame()
+df_b.add_column("x", [1.0, 2.0, 3.0])
+df_b.add_column("v", [1.0, 2.0, 3.0])
+
+r = df_a + df_b
+assert abs(r.at("v", 0) - 11.0) < 1e-9
+assert abs(r.at("v", 1) - 22.0) < 1e-9
+# original unchanged
+assert abs(df_a.at("v", 0) - 10.0) < 1e-9
+
+r2 = df_a - df_b
+assert abs(r2.at("v", 0) - 9.0) < 1e-9
+
+r3 = df_a * df_b
+assert abs(r3.at("v", 1) - 40.0) < 1e-9
+
+r4 = df_a / df_b
+assert abs(r4.at("v", 2) - 10.0) < 1e-9
+
+# scalar ops on double column
+r5 = df_a + 5.0
+assert abs(r5.at("v", 0) - 15.0) < 1e-9
+
+r6 = df_a * 3.0
+assert abs(r6.at("v", 0) - 30.0) < 1e-9
+
+r11 = 120.0 / df_a
+assert abs(r11.at("v", 0) - 12.0) < 1e-9
+assert abs(r11.at("v", 2) - 4.0) < 1e-9
+print("PASSED")
+
+print("\n=== Python Test A2: Arithmetic operators — int column with scalar → double ===")
+df_int2 = pdf.DataFrame()
+df_int2.add_column("v", [10, 20, 30])
+
+r7 = df_int2 * 2.0
+assert r7.column_dtype("v") == "double", f"expected double, got {r7.column_dtype('v')}"
+assert abs(r7.at("v", 2) - 60.0) < 1e-9
+
+r8 = df_int2 / 4.0
+assert r8.column_dtype("v") == "double"
+assert abs(r8.at("v", 0) - 2.5) < 1e-9
+
+r9 = df_int2 + 0.5
+assert r9.column_dtype("v") == "double"
+assert abs(r9.at("v", 1) - 20.5) < 1e-9
+
+r10 = 100.0 - df_int2
+assert r10.column_dtype("v") == "double"
+assert abs(r10.at("v", 0) - 90.0) < 1e-9
+print("PASSED")
+
+print("\n=== Python Test A3: Arithmetic with multi-index ===")
+df_mi1 = pdf.DataFrame()
+df_mi1.add_uniform_index("f", [1, 2, 3])
+df_mi1.add_column("s11", [-10.0, -20.0, -30.0])
+df_mi2 = pdf.DataFrame()
+df_mi2.add_uniform_index("f", [1, 2, 3])
+df_mi2.add_column("s11", [1.0, 2.0, 3.0])
+
+r_mi = df_mi1 + df_mi2
+assert abs(r_mi.at("s11", 0) - (-9.0)) < 1e-9
+assert r_mi.num_indices() == 1
+assert r_mi.is_index("f")
+print("PASSED")
+
+print("\n=== Python Test A4: Arithmetic — mixed types (int+float, int+complex, float+complex) ===")
+df_int = pdf.DataFrame()
+df_int.add_column("v", [1, 2, 3])     # int column
+
+df_flt = pdf.DataFrame()
+df_flt.add_column("v", [0.5, 1.5, 2.5])  # double column
+
+df_cpx = pdf.DataFrame()
+df_cpx.add_column("v", [0+1j, 0+2j, 0+3j])  # complex column
+
+# int + double → double
+r1 = df_int + df_flt
+assert df_int.column_dtype("v") == "int"     # original unchanged
+assert r1.column_dtype("v") == "double"
+assert abs(r1.at("v", 0) - 1.5) < 1e-9
+assert abs(r1.at("v", 2) - 5.5) < 1e-9
+
+# double + int → double (reversed)
+r2 = df_flt + df_int
+assert r2.column_dtype("v") == "double"
+assert abs(r2.at("v", 1) - 3.5) < 1e-9
+
+# int + complex → complex
+r3 = df_int + df_cpx
+assert r3.column_dtype("v") == "complex"
+assert abs(r3.at("v", 0) - (1+1j)) < 1e-9
+assert abs(r3.at("v", 2) - (3+3j)) < 1e-9
+
+# double + complex → complex
+r4 = df_flt + df_cpx
+assert r4.column_dtype("v") == "complex"
+assert abs(r4.at("v", 0) - (0.5+1j)) < 1e-9
+
+# int * double_df → double
+r5 = df_int * df_flt
+assert r5.column_dtype("v") == "double"
+assert abs(r5.at("v", 1) - 3.0) < 1e-9
+
+# string column should throw
+df_str = pdf.DataFrame()
+df_str.add_column("v", ["a", "b", "c"])
+try:
+    bad = df_int + df_str
+    assert False, "should have thrown"
+except Exception:
+    pass
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

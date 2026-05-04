@@ -1454,6 +1454,173 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    std::cout << "\n=== Test A1: Arithmetic operators — double columns ===" << std::endl;
+    {
+        DataFrame df1, df2;
+        df1.add_column<double>("a", {1.0, 2.0, 3.0});
+        df1.add_column<double>("v", {10.0, 20.0, 30.0});
+        df2.add_column<double>("a", {1.0, 2.0, 3.0});
+        df2.add_column<double>("v", {1.0, 2.0, 3.0});
+
+        // df + df
+        auto s = df1 + df2;
+        assert(approx_equal(s->at<double>("v", 0), 11.0));
+        assert(approx_equal(s->at<double>("v", 1), 22.0));
+        assert(approx_equal(s->at<double>("v", 2), 33.0));
+        // original unchanged
+        assert(approx_equal(df1.at<double>("v", 0), 10.0));
+
+        // df - df
+        auto d = df1 - df2;
+        assert(approx_equal(d->at<double>("v", 0), 9.0));
+        assert(approx_equal(d->at<double>("v", 2), 27.0));
+
+        // df * df
+        auto m = df1 * df2;
+        assert(approx_equal(m->at<double>("v", 0), 10.0));
+        assert(approx_equal(m->at<double>("v", 1), 40.0));
+
+        // df / df
+        auto q = df1 / df2;
+        assert(approx_equal(q->at<double>("v", 0), 10.0));
+        assert(approx_equal(q->at<double>("v", 2), 10.0));
+
+        // scalar ops: df op scalar
+        auto sp = df1 + 5.0;
+        assert(approx_equal(sp->at<double>("v", 0), 15.0));
+
+        auto sm = df1 - 5.0;
+        assert(approx_equal(sm->at<double>("v", 0), 5.0));
+
+        auto sc = df1 * 2.0;
+        assert(approx_equal(sc->at<double>("v", 0), 20.0));
+        assert(approx_equal(sc->at<double>("v", 2), 60.0));
+
+        auto sd = df1 / 2.0;
+        assert(approx_equal(sd->at<double>("v", 0), 5.0));
+
+        // scalar on left
+        auto rs = 100.0 - df1;
+        assert(approx_equal(rs->at<double>("v", 0), 90.0));
+        assert(approx_equal(rs->at<double>("v", 2), 70.0));
+
+        auto rm = 3.0 * df1;
+        assert(approx_equal(rm->at<double>("v", 0), 30.0));
+
+        auto ra = 1.0 + df1;
+        assert(approx_equal(ra->at<double>("v", 1), 21.0));
+
+        auto rd = 120.0 / df1;
+        assert(approx_equal(rd->at<double>("v", 0), 12.0));
+        assert(approx_equal(rd->at<double>("v", 2), 4.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    std::cout << "\n=== Test A2: Arithmetic operators — int column with scalar → double ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("x", {2, 4, 6});
+        df.add_column<int>("v", {10, 20, 30});
+
+        // int * double scalar → double column (promoted)
+        auto sc = df * 2.0;
+        assert(sc->column_dtype("v") == "double");
+        assert(approx_equal(sc->at<double>("v", 0), 20.0));
+        assert(approx_equal(sc->at<double>("v", 2), 60.0));
+
+        auto sd = df / 4.0;
+        assert(sd->column_dtype("v") == "double");
+        assert(approx_equal(sd->at<double>("v", 0), 2.5));
+
+        auto sp = df + 0.5;
+        assert(sp->column_dtype("v") == "double");
+        assert(approx_equal(sp->at<double>("v", 1), 20.5));
+
+        // scalar - int_df → double
+        auto rs = 100.0 - df;
+        assert(rs->column_dtype("v") == "double");
+        assert(approx_equal(rs->at<double>("v", 0), 90.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    std::cout << "\n=== Test A3: Arithmetic operators — complex column ===" << std::endl;
+    {
+        using C = std::complex<double>;
+        DataFrame df1, df2;
+        df1.add_column<C>("v", {C(1,2), C(3,4)});
+        df2.add_column<C>("v", {C(1,0), C(0,1)});
+
+        auto s = df1 + df2;
+        assert(approx_equal(s->at<C>("v", 0), C(2,2)));
+        assert(approx_equal(s->at<C>("v", 1), C(3,5)));
+
+        auto sc = df1 * 2.0;
+        assert(approx_equal(sc->at<C>("v", 0), C(2,4)));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    std::cout << "\n=== Test A5: Arithmetic — mixed types (int+double, int+complex, double+complex) ===" << std::endl;
+    {
+        using C = std::complex<double>;
+
+        // int + double → double
+        DataFrame di, dd;
+        di.add_column<int>("v", {1, 2, 3});
+        dd.add_column<double>("v", {0.5, 1.5, 2.5});
+        auto r1 = di + dd;
+        assert(r1->column_dtype("v") == "double");
+        assert(approx_equal(r1->at<double>("v", 0), 1.5));
+        assert(approx_equal(r1->at<double>("v", 2), 5.5));
+
+        // double + int → double (order reversed)
+        auto r2 = dd + di;
+        assert(r2->column_dtype("v") == "double");
+        assert(approx_equal(r2->at<double>("v", 1), 3.5));
+
+        // int + complex → complex
+        DataFrame dc;
+        dc.add_column<C>("v", {C(0,1), C(0,2), C(0,3)});
+        auto r3 = di + dc;
+        assert(r3->column_dtype("v") == "complex");
+        assert(approx_equal(r3->at<C>("v", 0), C(1,1)));
+        assert(approx_equal(r3->at<C>("v", 2), C(3,3)));
+
+        // double + complex → complex
+        auto r4 = dd + dc;
+        assert(r4->column_dtype("v") == "complex");
+        assert(approx_equal(r4->at<C>("v", 0), C(0.5,1)));
+
+        // int * double_df → double
+        auto r5 = di * dd;
+        assert(r5->column_dtype("v") == "double");
+        assert(approx_equal(r5->at<double>("v", 1), 3.0));
+
+        // string column throws
+        DataFrame ds;
+        ds.add_column<std::string>("v", {"a", "b", "c"});
+        bool caught = false;
+        try { auto bad = di + ds; } catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    std::cout << "\n=== Test A4: Arithmetic operators — with multi-index ===" << std::endl;
+    {
+        DataFrame df1, df2;
+        df1.add_uniform_index<int>("f", {1, 2, 3});
+        df1.add_column<double>("s11", {-10.0, -20.0, -30.0});
+        df2.add_uniform_index<int>("f", {1, 2, 3});
+        df2.add_column<double>("s11", {1.0, 2.0, 3.0});
+
+        auto r = df1 + df2;
+        assert(approx_equal(r->at<double>("s11", 0), -9.0));
+        assert(approx_equal(r->at<double>("s11", 2), -27.0));
+        // index dims preserved
+        assert(r->num_indices() == 1);
+        assert(r->is_index("f"));
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== ALL TESTS PASSED ===" << std::endl;
     return 0;
 }

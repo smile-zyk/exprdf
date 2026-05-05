@@ -849,6 +849,30 @@ public:
         index_dims_.push_back(IndexDim::create_grouped(name, lengths, quantity));
     }
 
+    // add_grouped_index_groups overload: flat data + explicit per-group sizes.
+    //   group_data.size() must equal sum(group_sizes).
+    //   group_sizes.size() must equal num_rows() (one size per current outer row).
+    template <typename T>
+    void add_grouped_index_groups(const std::string& name,
+                                  const std::vector<T>& group_data,
+                                  const std::vector<std::size_t>& group_sizes,
+                                  const std::string& quantity = "") {
+        std::size_t total = 0;
+        for (auto sz : group_sizes) total += sz;
+        if (total != group_data.size())
+            throw std::invalid_argument(
+                "sum(group_sizes)=" + std::to_string(total) +
+                " does not match group_data.size()=" + std::to_string(group_data.size()));
+        std::vector<std::vector<T>> groups;
+        groups.reserve(group_sizes.size());
+        std::size_t offset = 0;
+        for (auto sz : group_sizes) {
+            groups.emplace_back(group_data.begin() + offset, group_data.begin() + offset + sz);
+            offset += sz;
+        }
+        add_grouped_index_groups<T>(name, groups, quantity);
+    }
+
     // from_product: construct a DataFrame from an ordered list of (name, levels) pairs.
     //   Applies add_uniform_index for each entry in sequence.
     static std::shared_ptr<DataFrame> from_product(

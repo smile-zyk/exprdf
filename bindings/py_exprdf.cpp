@@ -580,4 +580,21 @@ PYBIND11_MODULE(exprdf, m) {
         .def("__rtruediv__", [](const exprdf::DataFrame& self, double s) {
             return s / self;
         }, py::arg("scalar"), "scalar / df on last column");
+
+    // ----------------------------------------------------------------
+    // Module-level math functions (operate on the last column)
+    // ----------------------------------------------------------------
+    m.def("abs",    [](const exprdf::DataFrame& df) { return df.math_abs();    }, py::arg("df"), "abs(df): |last col|, int→int, double→double, complex→double");
+    m.def("mag",    [](const exprdf::DataFrame& df) { return df.math_mag();    }, py::arg("df"), "mag(df): magnitude of last col (same as abs)");
+    m.def("real",   [](const exprdf::DataFrame& df) { return df.math_real();   }, py::arg("df"), "real(df): real part of last col → double");
+    m.def("imag",   [](const exprdf::DataFrame& df) { return df.math_imag();   }, py::arg("df"), "imag(df): imaginary part of last col → double");
+    m.def("phase",  [](const exprdf::DataFrame& df) { return df.math_phase();  }, py::arg("df"), "phase(df): phase angle (radians) of last col → double");
+    m.def("dB",     [](const exprdf::DataFrame& df) { return df.math_dB();     }, py::arg("df"), "dB(df): 20·log10(|last col|) → double");
+    m.def("dBm",    [](const exprdf::DataFrame& df) { return df.math_dBm();    }, py::arg("df"), "dBm(df): 10·log10(|last col|·1000) → double");
+    m.def("wtodBm", [](const exprdf::DataFrame& df) { return df.math_wtodBm(); }, py::arg("df"), "wtodBm(df): 10·log10(last col·1000), real input only → double");
+    m.def("sqr",    [](const exprdf::DataFrame& df) { return df.math_sqr();    }, py::arg("df"), "sqr(df): x² on last col, preserves type");
+    m.def("sqrt",   [](const exprdf::DataFrame& df) { return df.math_sqrt();   }, py::arg("df"), "sqrt(df): √last col, int→double, complex→complex");
+    m.def("exp",    [](const exprdf::DataFrame& df) { return df.math_exp();    }, py::arg("df"), "exp(df): e^(last col), int→double, complex→complex");
+    m.def("ln",     [](const exprdf::DataFrame& df) { return df.math_ln();     }, py::arg("df"), "ln(df): natural log of last col, int→double, complex→complex");
+    m.def("log10",  [](const exprdf::DataFrame& df) { return df.math_log10();  }, py::arg("df"), "log10(df): log₁₀ of last col, int→double, complex→complex");
 }

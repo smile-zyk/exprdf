@@ -1454,6 +1454,34 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // === Test 59: add_grouped_index_groups flat overload ===
+    std::cout << "\n=== Test 59: add_grouped_index_groups flat overload ===" << std::endl;
+    {
+        // Same layout as Test 57 (level x number ragged 3,2)
+        // but constructed via flat data + group_sizes overload
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {0,1,2,0,1}, {3,2});
+        // Must match the vector-of-vectors version exactly
+        assert(df.num_rows() == 5);
+        assert(df.num_indices() == 2);
+        assert(df.get_index_dim("number").is_grouped());
+        assert(df.get_index_dim("number").group_lengths.size() == 2);
+        assert(df.get_index_dim("number").group_lengths[0] == 3);
+        assert(df.get_index_dim("number").group_lengths[1] == 2);
+        auto lv = df.get_column_as<int>("level");
+        assert(lv[0]==0 && lv[1]==0 && lv[2]==0 && lv[3]==1 && lv[4]==1);
+        auto nv = df.get_column_as<int>("number");
+        assert(nv[0]==0 && nv[1]==1 && nv[2]==2 && nv[3]==0 && nv[4]==1);
+
+        // Error: sum(group_sizes) != data.size()
+        bool threw = false;
+        try { df.add_grouped_index_groups<int>("bad", {1,2,3}, {2,2}); }
+        catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== Test A1: Arithmetic operators — double columns ===" << std::endl;
     {
         DataFrame df1, df2;

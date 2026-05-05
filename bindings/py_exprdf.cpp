@@ -437,6 +437,39 @@ PYBIND11_MODULE(exprdf, m) {
         }, py::arg("name"), py::arg("groups"), py::arg("quantity") = "",
            "Add a grouped index dimension where inner group sizes may differ")
 
+        // add_grouped_index_groups (flat overload): flat data + explicit per-group sizes
+        .def("add_grouped_index_groups", [](exprdf::DataFrame& self, const std::string& name, py::list data, py::list group_sizes, const std::string& quantity) {
+            if (data.empty())
+                throw std::invalid_argument("data cannot be empty");
+            std::vector<std::size_t> sizes;
+            for (auto s : group_sizes) sizes.push_back(s.cast<std::size_t>());
+
+            py::object first = data[0];
+            if (py::isinstance<py::str>(first)) {
+                std::vector<std::string> v;
+                for (auto item : data) v.push_back(item.cast<std::string>());
+                self.add_grouped_index_groups<std::string>(name, v, sizes, quantity);
+            } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
+                bool has_float = false;
+                for (auto item : data)
+                    if (py::isinstance<py::float_>(item)) { has_float = true; break; }
+                if (has_float) {
+                    std::vector<double> v;
+                    for (auto item : data) v.push_back(item.cast<double>());
+                    self.add_grouped_index_groups<double>(name, v, sizes, quantity);
+                } else {
+                    std::vector<int> v;
+                    for (auto item : data) v.push_back(item.cast<int>());
+                    self.add_grouped_index_groups<int>(name, v, sizes, quantity);
+                }
+            } else {
+                std::vector<double> v;
+                for (auto item : data) v.push_back(item.cast<double>());
+                self.add_grouped_index_groups<double>(name, v, sizes, quantity);
+            }
+        }, py::arg("name"), py::arg("data"), py::arg("group_sizes"), py::arg("quantity") = "",
+           "Add a grouped index dimension from flat data + explicit per-group sizes")
+
         // ----------------------------------------------------------------
         // Multi-index queries & addressing
         // ----------------------------------------------------------------

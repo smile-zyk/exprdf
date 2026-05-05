@@ -905,6 +905,25 @@ for r in range(12):
     assert df58.flat_index(df58.multi_index(r)) == r
 print("PASSED")
 
+# === Test 59: add_grouped_index_groups flat overload ===
+print("\n=== Test 59: add_grouped_index_groups flat overload ===")
+df59 = pdf.DataFrame()
+df59.add_uniform_index("level", [0, 1])
+df59.add_grouped_index_groups("number", [0, 1, 2, 0, 1], [3, 2])
+assert df59.num_rows() == 5
+assert df59.num_indices() == 2
+assert df59.get_index_dim("number").kind == "grouped"
+assert list(df59.get_index_dim("number").group_lengths) == [3, 2]
+assert df59["level"]  == [0, 0, 0, 1, 1]
+assert df59["number"] == [0, 1, 2, 0, 1]
+# error: sum(group_sizes) != len(data)
+try:
+    df59.add_grouped_index_groups("bad", [1, 2, 3], [2, 2])
+    assert False, "expected exception"
+except Exception:
+    pass
+print("PASSED")
+
 print("\n=== Python Test A1: Arithmetic operators — df op df ===")
 df_a = pdf.DataFrame()
 df_a.add_column("x", [1.0, 2.0, 3.0])

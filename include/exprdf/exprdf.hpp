@@ -1405,6 +1405,7 @@ public:
                 if (indices[i] == -1)
                     result->index_dims_.push_back(index_dims_[n_outer + i]);
             result->type_ = type_;
+            rebuild_index_dims(*result);
             return result;
         }
 
@@ -1501,6 +1502,7 @@ public:
             result->index_dims_.push_back(d);
 
         result->type_ = type_;
+        rebuild_index_dims(*result);
         return result;
     }
 
@@ -1557,6 +1559,7 @@ public:
                 result->index_dims_.push_back(dim);
             }
             result->type_ = type_;
+            rebuild_index_dims(*result);
             return result;
         }
     }
@@ -2025,6 +2028,67 @@ private:
     std::string path_;                             // source file path (metadata only)
     std::string type_;                             // data-type tag   (metadata only)
     std::string name_;                             // dataset name    (metadata only)
+
+    // Rebuild index_dims_ metadata for a freshly-constructed result DataFrame.
+    //
+    // After loc / sub reassemble rows, the IndexDim descriptors copied verbatim from
+    // the source no longer reflect the result layout:
+    //   - Uniform dims : num_outer must be the product of all preceding level_counts.
+    //   - Grouped dims : group_lengths must reflect the actual consecutive-equal-value
+    //                    run lengths as they appear in each outer group of the result.
+    //
+    // This is done by a single pass over index_dims_ in order (outermost first).
+    // For each dim we track "current outer groups" as (start, length) spans and split
+    // them by the dim's column values to produce the inner groups for the next dim.
+    static void rebuild_index_dims(DataFrame& df) {
+        std::size_t n = df.index_dims_.size();
+        if (n == 0) return;
+
+        // Track current outer groups: each entry is (start_row, length).
+        using Span = std::pair<std::size_t, std::size_t>;
+        std::vector<Span> outer_groups;
+        outer_groups.push_back({0, df.num_rows()});
+
+        for (std::size_t d = 0; d < n; ++d) {
+            IndexDim& dim = df.index_dims_[d];
+            const Column& col = df.get_col(dim.name);
+
+            if (dim.is_uniform()) {
+                // num_outer = number of current outer groups.
+                // levels stay the same (unique values haven't changed).
+                dim.num_outer = outer_groups.size();
+
+                // Next outer groups: one per unique run within each outer group.
+                std::vector<Span> next;
+                for (const auto& og : outer_groups) {
+                    std::size_t r = og.first, end = og.first + og.second;
+                    while (r < end) {
+                        std::size_t re = r + 1;
+                        while (re < end && col.value_equals(re, col, r)) ++re;
+                        next.push_back({r, re - r});
+                        r = re;
+                    }
+                }
+                outer_groups = std::move(next);
+            } else {
+                // Grouped: rebuild group_lengths from actual consecutive runs per outer group.
+                std::vector<std::size_t> new_lengths;
+                std::vector<Span> next;
+                for (const auto& og : outer_groups) {
+                    std::size_t r = og.first, end = og.first + og.second;
+                    while (r < end) {
+                        std::size_t re = r + 1;
+                        while (re < end && col.value_equals(re, col, r)) ++re;
+                        new_lengths.push_back(re - r);
+                        next.push_back({r, re - r});
+                        r = re;
+                    }
+                }
+                dim.group_lengths = std::move(new_lengths);
+                outer_groups = std::move(next);
+            }
+        }
+    }
 
     // Internal column lookup; throws std::invalid_argument on miss.
     const Column& get_col(const std::string& name) const {

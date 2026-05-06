@@ -397,6 +397,9 @@ int main() {
         assert(sub->num_indices() == 2); // a, b remain
         assert(sub->at<double>("v", 0) == 2.0);
         assert(sub->at<double>("v", 5) == 12.0);
+        // After loc, a has num_outer=1, b has num_outer=2 (2 groups of a)
+        assert(sub->get_index_dim("a").num_outer == 1);
+        assert(sub->get_index_dim("b").num_outer == 2);
 
         // loc({1, 0}) -> fix b=20, c=100, 2 rows
         auto sub2 = mi.loc({1, 0});
@@ -977,6 +980,12 @@ int main() {
         auto s11 = sub->get_column_as<double>("S11");
         assert(approx_equal(s11[0], -20.0));
         assert(approx_equal(s11[1], -25.0));
+
+        // After loc, the remaining 'bias' dim should have num_outer=1 and level_count=2
+        auto dim_bias = sub->get_index_dim("bias");
+        assert(dim_bias.is_uniform());
+        assert(dim_bias.level_count() == 2);
+        assert(dim_bias.num_outer == 1);
     }
     std::cout << "PASSED" << std::endl;
 

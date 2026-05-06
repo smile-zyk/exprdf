@@ -1042,4 +1042,164 @@ except Exception:
     pass
 print("PASSED")
 
+# ================================================================
+# Tests 61-66: IndexDim parameter correctness after loc / sub
+# ================================================================
+
+# === Python Test 61: loc IndexDim — Uniform + RegularGrouped (last dim) ===
+print("\n=== Python Test 61: loc IndexDim — Uniform + RegularGrouped (last dim) ===")
+df = pdf.DataFrame()
+df.add_uniform_index("bias", [1, 2])
+df.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3)
+df.add_column("S11", [-10.0, -20.0, -30.0, -15.0, -25.0, -35.0])
+
+# wildcard on freq → keep both dims, layout unchanged
+wc = df.loc(-1)
+assert wc.num_rows() == 6
+assert wc.num_indices() == 2
+d_bias = wc.get_index_dim("bias")
+assert d_bias.is_uniform()
+assert d_bias.num_outer == 1
+assert d_bias.level_count == 2
+d_freq = wc.get_index_dim("freq")
+assert d_freq.is_grouped()
+assert list(d_freq.group_lengths) == [3, 3]
+
+# fix freq position 1 → 2 rows, only bias remains
+fixed = df.loc(1)
+assert fixed.num_rows() == 2
+assert fixed.num_indices() == 1
+d_bias2 = fixed.get_index_dim("bias")
+assert d_bias2.is_uniform()
+assert d_bias2.num_outer == 1
+assert d_bias2.level_count == 2
+print("PASSED")
+
+# === Python Test 62: loc IndexDim — 3D Uniform num_outer chain ===
+print("\n=== Python Test 62: loc IndexDim — 3D Uniform num_outer chain ===")
+df = pdf.DataFrame()
+df.add_uniform_index("a", [1, 2])
+df.add_uniform_index("b", [10, 20, 30])
+df.add_uniform_index("c", [100, 200])
+df.add_column("v", list(range(12)))
+
+# wildcard on c
+r = df.loc(-1)
+assert r.num_rows() == 12
+assert r.get_index_dim("a").num_outer == 1
+assert r.get_index_dim("b").num_outer == 2
+assert r.get_index_dim("c").num_outer == 6
+
+# fix c=100 → 6 rows, a+b remain
+r2 = df.loc(0)
+assert r2.num_rows() == 6
+assert r2.num_indices() == 2
+assert r2.get_index_dim("a").num_outer == 1
+assert r2.get_index_dim("b").num_outer == 2
+
+# fix b=20, wildcard c → 4 rows, a+c remain
+r3 = df.loc(1, -1)
+assert r3.num_rows() == 4
+assert r3.num_indices() == 2
+assert r3.get_index_dim("a").num_outer == 1
+assert r3.get_index_dim("c").num_outer == 2
+print("PASSED")
+
+# === Python Test 63: loc IndexDim — Ragged last dim ===
+print("\n=== Python Test 63: loc IndexDim — Ragged last dim ===")
+df = pdf.DataFrame()
+df.add_uniform_index("level", [0, 1])
+df.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+df.add_column("val", [10.0, 20.0, 30.0, 40.0, 50.0])
+
+# wildcard on number → keep both dims, group_lengths=[3,2]
+r = df.loc(-1)
+assert r.num_rows() == 5
+d_num = r.get_index_dim("number")
+assert d_num.is_grouped()
+assert list(d_num.group_lengths) == [3, 2]
+
+# fix number=0 → 2 rows, only level remains
+r2 = df.loc(0)
+assert r2.num_rows() == 2
+assert r2.num_indices() == 1
+d_lv = r2.get_index_dim("level")
+assert d_lv.is_uniform()
+assert d_lv.num_outer == 1
+assert d_lv.level_count == 2
+print("PASSED")
+
+# === Python Test 64: loc IndexDim — 3D ragged intermediate dim ===
+print("\n=== Python Test 64: loc IndexDim — 3D ragged intermediate dim ===")
+df = pdf.DataFrame()
+df.add_uniform_index("level", [0, 1])
+df.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+df.add_grouped_index_groups("point", [[0, 1], [0, 1, 2], [0], [0, 1, 2, 3], [0, 1]])
+df.add_column("x", list(range(12)))
+
+# wildcard on point: number.group_lengths=[6,6], point.group_lengths=[2,3,1,4,2]
+r = df.loc(-1)
+assert r.num_rows() == 12
+d_num = r.get_index_dim("number")
+assert list(d_num.group_lengths) == [3, 2]
+d_pt = r.get_index_dim("point")
+assert list(d_pt.group_lengths) == [2, 3, 1, 4, 2]
+
+# fix point=0 → 5 rows, number.group_lengths=[3,2]
+r2 = df.loc(0)
+assert r2.num_rows() == 5
+assert r2.num_indices() == 2
+d_num2 = r2.get_index_dim("number")
+assert list(d_num2.group_lengths) == [3, 2]
+
+# fix number=0, point=0 → 2 rows, only level
+r3 = df.loc(0, 0)
+assert r3.num_rows() == 2
+assert r3.num_indices() == 1
+d_lv = r3.get_index_dim("level")
+assert d_lv.num_outer == 1
+assert d_lv.level_count == 2
+print("PASSED")
+
+# === Python Test 65: sub IndexDim — independent column ===
+print("\n=== Python Test 65: sub IndexDim — independent column ===")
+df = pdf.DataFrame()
+df.add_uniform_index("a", [1, 2, 3])
+df.add_uniform_index("b", [10, 20])
+df.add_column("v", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+sa = df.sub("a")
+assert sa.num_rows() == 3
+assert sa.num_indices() == 1
+d_a = sa.get_index_dim("a")
+assert d_a.is_uniform()
+assert d_a.num_outer == 1
+assert d_a.level_count == 3
+print("PASSED")
+
+# === Python Test 66: loc IndexDim — chained loc ===
+print("\n=== Python Test 66: loc IndexDim — chained loc ===")
+df = pdf.DataFrame()
+df.add_uniform_index("a", [1, 2, 3])
+df.add_uniform_index("b", [10, 20, 30, 40])
+df.add_uniform_index("c", [100, 200])
+df.add_column("v", list(range(24)))
+
+# Step 1: fix c=100 → 12 rows, a+b remain
+r1 = df.loc(0)
+assert r1.num_rows() == 12
+assert r1.num_indices() == 2
+assert r1.get_index_dim("a").num_outer == 1
+assert r1.get_index_dim("b").num_outer == 3
+
+# Step 2: on r1, fix b=20 → 3 rows, only a remains
+r2 = r1.loc(1)
+assert r2.num_rows() == 3
+assert r2.num_indices() == 1
+d_a = r2.get_index_dim("a")
+assert d_a.is_uniform()
+assert d_a.num_outer == 1
+assert d_a.level_count == 3
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

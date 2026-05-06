@@ -2032,14 +2032,24 @@ private:
     // Rebuild index_dims_ metadata for a freshly-constructed result DataFrame.
     //
     // After loc / sub reassemble rows, the IndexDim descriptors copied verbatim from
-    // the source no longer reflect the result layout:
-    //   - Uniform dims : num_outer must be the product of all preceding level_counts.
-    //   - Grouped dims : group_lengths must reflect the actual consecutive-equal-value
-    //                    run lengths as they appear in each outer group of the result.
+    // the source no longer reflect the result layout.  We repair each retained dim:
     //
-    // This is done by a single pass over index_dims_ in order (outermost first).
-    // For each dim we track "current outer groups" as (start, length) spans and split
-    // them by the dim's column values to produce the inner groups for the next dim.
+    //   Uniform dim  : num_outer  ← number of current outer groups (= product of
+    //                               all preceding level_counts in the result).
+    //                  levels     ← unchanged (same unique value set).
+    //
+    //   Grouped dim  : group_lengths ← one entry per current outer group, each
+    //                               equal to that group's total row count.
+    //                  NOTE: a Grouped dim's column values within one outer group
+    //                  are *not* required to be uniform runs; the group_length is
+    //                  simply the row span owned by that outer group.  The next dim
+    //                  (if any) is responsible for further sub-grouping.
+    //
+    // Algorithm: maintain "current outer groups" as (start, length) spans.
+    //   Uniform dim → advance outer groups by splitting each span on consecutive-
+    //                 equal runs (each run = one unique-level group).
+    //   Grouped dim → each current span IS one group; record its length, then
+    //                 split it into per-run spans for the next level (if any).
     static void rebuild_index_dims(DataFrame& df) {
         std::size_t n = df.index_dims_.size();
         if (n == 0) return;
@@ -2058,7 +2068,7 @@ private:
                 // levels stay the same (unique values haven't changed).
                 dim.num_outer = outer_groups.size();
 
-                // Next outer groups: one per unique run within each outer group.
+                // Next outer groups: one span per consecutive-equal-value run.
                 std::vector<Span> next;
                 for (const auto& og : outer_groups) {
                     std::size_t r = og.first, end = og.first + og.second;
@@ -2071,18 +2081,22 @@ private:
                 }
                 outer_groups = std::move(next);
             } else {
-                // Grouped: rebuild group_lengths from actual consecutive runs per outer group.
+                // Grouped: group_lengths[i] = number of consecutive-equal-value runs
+                // in span i, i.e. how many direct sub-groups the i-th outer group contains.
                 std::vector<std::size_t> new_lengths;
+                new_lengths.reserve(outer_groups.size());
                 std::vector<Span> next;
                 for (const auto& og : outer_groups) {
                     std::size_t r = og.first, end = og.first + og.second;
+                    std::size_t run_count = 0;
                     while (r < end) {
                         std::size_t re = r + 1;
                         while (re < end && col.value_equals(re, col, r)) ++re;
-                        new_lengths.push_back(re - r);
                         next.push_back({r, re - r});
+                        ++run_count;
                         r = re;
                     }
+                    new_lengths.push_back(run_count);
                 }
                 dim.group_lengths = std::move(new_lengths);
                 outer_groups = std::move(next);

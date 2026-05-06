@@ -1491,6 +1491,247 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // ================================================================
+    // Tests 61-66: IndexDim parameter correctness after loc / sub
+    // ================================================================
+
+    // === Test 61: loc on Uniform+RegularGrouped — verify num_outer & group_lengths ===
+    std::cout << "\n=== Test 61: loc IndexDim — Uniform + RegularGrouped (last dim) ===" << std::endl;
+    {
+        // bias(Uniform 2) × freq(RegularGrouped group_lengths=[3,3])
+        DataFrame df;
+        df.add_uniform_index<int>("bias", {1, 2});
+        df.add_grouped_index<double>("freq", {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3);
+        df.add_column<double>("S11", {-10,-20,-30,-15,-25,-35});
+
+        // --- loc({-1}): wildcard on freq → keep both dims, layout unchanged ---
+        auto wc = df.loc({-1});
+        assert(wc->num_rows() == 6);
+        assert(wc->num_indices() == 2);
+        {
+            auto d_bias = wc->get_index_dim("bias");
+            assert(d_bias.is_uniform());
+            assert(d_bias.num_outer == 1);
+            assert(d_bias.level_count() == 2);
+
+            auto d_freq = wc->get_index_dim("freq");
+            assert(d_freq.is_grouped());
+            // group_lengths: 2 outer groups (bias=1, bias=2), each has 3 rows
+            assert(d_freq.group_lengths.size() == 2);
+            assert(d_freq.group_lengths[0] == 3);
+            assert(d_freq.group_lengths[1] == 3);
+        }
+
+        // --- loc({1}): fix freq position 1 → 2 rows, only bias remains ---
+        auto fixed = df.loc({1});
+        assert(fixed->num_rows() == 2);
+        assert(fixed->num_indices() == 1);
+        {
+            auto d_bias = fixed->get_index_dim("bias");
+            assert(d_bias.is_uniform());
+            assert(d_bias.num_outer == 1);
+            assert(d_bias.level_count() == 2);
+        }
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 62: loc on 3-dim Uniform — num_outer chain ===
+    std::cout << "\n=== Test 62: loc IndexDim — 3D Uniform num_outer chain ===" << std::endl;
+    {
+        // a(2) × b(3) × c(2)  →  12 rows
+        DataFrame df;
+        df.add_uniform_index<int>("a", {1, 2});
+        df.add_uniform_index<int>("b", {10, 20, 30});
+        df.add_uniform_index<int>("c", {100, 200});
+        df.add_column<double>("v", {1,2,3,4,5,6,7,8,9,10,11,12});
+
+        // loc({-1}): wildcard on c → keep a, b, c  (layout unchanged)
+        {
+            auto r = df.loc({-1});
+            assert(r->num_rows() == 12);
+            assert(r->get_index_dim("a").num_outer == 1);
+            assert(r->get_index_dim("b").num_outer == 2);  // 2 groups of a
+            assert(r->get_index_dim("c").num_outer == 6);  // 2*3 outer groups
+        }
+
+        // loc({0}): fix c=100 → 6 rows, dims a, b remain
+        {
+            auto r = df.loc({0});
+            assert(r->num_rows() == 6);
+            assert(r->num_indices() == 2);
+            assert(r->get_index_dim("a").num_outer == 1);
+            assert(r->get_index_dim("b").num_outer == 2);
+        }
+
+        // loc({1, -1}): fix b=20, wildcard c → 4 rows, dims a, c remain
+        {
+            auto r = df.loc({1, -1});
+            assert(r->num_rows() == 4);
+            assert(r->num_indices() == 2);
+            assert(r->get_index_dim("a").num_outer == 1);
+            assert(r->get_index_dim("a").level_count() == 2);
+            assert(r->get_index_dim("c").num_outer == 2);  // one c-group per a value
+            assert(r->get_index_dim("c").level_count() == 2);
+        }
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 63: loc on Ragged — group_lengths after loc({0}) ===
+    std::cout << "\n=== Test 63: loc IndexDim — Ragged last dim ===" << std::endl;
+    {
+        // level(Uniform 2) × number(Ragged group_lengths=[3,2])
+        // Rows: [L0,N0],[L0,N1],[L0,N2],[L1,N0],[L1,N1]
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0,1,2}, {0,1}});
+        df.add_column<double>("val", {10,20,30,40,50});
+
+        // --- wildcard on number: keep both dims ---
+        {
+            auto r = df.loc({-1});
+            assert(r->num_rows() == 5);
+            assert(r->num_indices() == 2);
+            auto d_num = r->get_index_dim("number");
+            assert(d_num.is_grouped());
+            // group_lengths should still be [3, 2]
+            assert(d_num.group_lengths.size() == 2);
+            assert(d_num.group_lengths[0] == 3);
+            assert(d_num.group_lengths[1] == 2);
+        }
+
+        // --- loc({0}): fix number position 0 → [L0,N0] and [L1,N0] → 2 rows ---
+        {
+            auto r = df.loc({0});
+            assert(r->num_rows() == 2);
+            assert(r->num_indices() == 1);  // only level remains
+            auto d_lv = r->get_index_dim("level");
+            assert(d_lv.is_uniform());
+            assert(d_lv.num_outer == 1);
+            assert(d_lv.level_count() == 2);
+        }
+
+        // --- loc({2}): fix number position 2 → only L0 has N2 → 1 row ---
+        {
+            auto r = df.loc({2});
+            assert(r->num_rows() == 1);
+            assert(r->num_indices() == 1);
+            // level still has its levels but now only 1 outer group of size 1
+            auto d_lv = r->get_index_dim("level");
+            assert(d_lv.is_uniform());
+            assert(d_lv.num_outer == 1);
+            // level_count stays 2 (the unique values set is unchanged)
+            assert(d_lv.level_count() == 2);
+        }
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 64: loc on 3-dim ragged — intermediate dim group_lengths ===
+    std::cout << "\n=== Test 64: loc IndexDim — 3D ragged intermediate dim ===" << std::endl;
+    {
+        // level(Uniform 2) × number(Ragged [3,2]) × point(Ragged [2,3,1, 4,2])
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0,1,2},{0,1}});
+        df.add_grouped_index_groups<int>("point",  {{0,1},{0,1,2},{0},{0,1,2,3},{0,1}});
+        df.add_column<double>("x", {0,1,2,3,4,5,6,7,8,9,10,11});
+        // 12 rows total
+
+        // --- loc({-1}): wildcard on point, keep all 3 dims ---
+        {
+            auto r = df.loc({-1});
+            assert(r->num_rows() == 12);
+            assert(r->num_indices() == 3);
+            // number: outer groups are the 2 level spans
+            // group_lengths[i] = number of direct sub-groups (number values) per level group
+            auto d_num = r->get_index_dim("number");
+            assert(d_num.group_lengths.size() == 2);
+            assert(d_num.group_lengths[0] == 3); // level=0 has 3 number values
+            assert(d_num.group_lengths[1] == 2); // level=1 has 2 number values
+            // point: outer groups are the 5 number runs → group_lengths=[2,3,1,4,2]
+            auto d_pt = r->get_index_dim("point");
+            assert(d_pt.group_lengths.size() == 5);
+            assert(d_pt.group_lengths[0] == 2);
+            assert(d_pt.group_lengths[1] == 3);
+            assert(d_pt.group_lengths[2] == 1);
+            assert(d_pt.group_lengths[3] == 4);
+            assert(d_pt.group_lengths[4] == 2);
+        }
+
+        // --- loc({0}): fix point=0 → 5 rows (one per contour), keep level+number ---
+        {
+            auto r = df.loc({0});
+            assert(r->num_rows() == 5);
+            assert(r->num_indices() == 2);
+            // number still ragged [3,2] (each level group has 3 and 2 number entries)
+            auto d_num = r->get_index_dim("number");
+            assert(d_num.is_grouped());
+            assert(d_num.group_lengths.size() == 2);
+            assert(d_num.group_lengths[0] == 3);
+            assert(d_num.group_lengths[1] == 2);
+        }
+
+        // --- loc({0, 0}): fix number=0 then point=0 → 2 rows, only level remains ---
+        {
+            auto r = df.loc({0, 0});
+            assert(r->num_rows() == 2);
+            assert(r->num_indices() == 1);
+            auto d_lv = r->get_index_dim("level");
+            assert(d_lv.num_outer == 1);
+            assert(d_lv.level_count() == 2);
+        }
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 65: sub IndexDim correctness for independent column ===
+    std::cout << "\n=== Test 65: sub IndexDim — independent column ===" << std::endl;
+    {
+        // a(Uniform 3) × b(Uniform 2)  → 6 rows
+        DataFrame df;
+        df.add_uniform_index<int>("a", {1, 2, 3});
+        df.add_uniform_index<int>("b", {10, 20});
+        df.add_column<double>("v", {1,2,3,4,5,6});
+
+        // sub("a"): collapses b, returns 3 rows with only "a" index
+        auto sa = df.sub("a");
+        assert(sa->num_rows() == 3);
+        assert(sa->num_indices() == 1);
+        auto d_a = sa->get_index_dim("a");
+        assert(d_a.is_uniform());
+        assert(d_a.num_outer == 1);
+        assert(d_a.level_count() == 3);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 66: chained loc — num_outer after two-step reduction ===
+    std::cout << "\n=== Test 66: loc IndexDim — chained loc ===" << std::endl;
+    {
+        // a(3) × b(4) × c(2)  →  24 rows
+        DataFrame df;
+        df.add_uniform_index<int>("a", {1, 2, 3});
+        df.add_uniform_index<int>("b", {10, 20, 30, 40});
+        df.add_uniform_index<int>("c", {100, 200});
+        std::vector<double> v(24);
+        for (int i = 0; i < 24; ++i) v[i] = i;
+        df.add_column<double>("v", v);
+
+        // Step 1: fix c=100 → 12 rows, dims a(3) × b(4)
+        auto r1 = df.loc({0});
+        assert(r1->num_rows() == 12);
+        assert(r1->num_indices() == 2);
+        assert(r1->get_index_dim("a").num_outer == 1);
+        assert(r1->get_index_dim("b").num_outer == 3);
+
+        // Step 2: on r1, fix b=20 → 3 rows, only a remains
+        auto r2 = r1->loc({1});
+        assert(r2->num_rows() == 3);
+        assert(r2->num_indices() == 1);
+        auto d_a = r2->get_index_dim("a");
+        assert(d_a.is_uniform());
+        assert(d_a.num_outer == 1);
+        assert(d_a.level_count() == 3);
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== Test A1: Arithmetic operators — double columns ===" << std::endl;
     {
         DataFrame df1, df2;

@@ -1202,4 +1202,128 @@ assert d_a.num_outer == 1
 assert d_a.level_count == 3
 print("PASSED")
 
+# ----------------------------------------------------------------
+# Test B1: add_list_column, dot access, (k) call, [row] indexing
+# ----------------------------------------------------------------
+print("\n=== Test B1: list column basic ===", end=" ", flush=True)
+df_b1 = pdf.DataFrame()
+df_b1.add_uniform_index("f", [1.0, 2.0, 3.0])
+df_b1.add_list_column("S", [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]])
+assert df_b1.column_shape("S") == [2]
+assert df_b1.num_rows() == 3
+# df.S -> ColumnGroupProxy
+assert repr(df_b1.S) == "<ColumnGroupProxy 'S'>"
+# df.S(1) -> scalar DataFrame col "S" = [10,30,50]
+s1 = df_b1.S(1)
+assert s1.get_column("S") == [10.0, 30.0, 50.0]
+# df.S(2) -> [20,40,60]
+s2 = df_b1.S(2)
+assert s2.get_column("S") == [20.0, 40.0, 60.0]
+# df.S(1)[0] -> 10.0
+assert df_b1.S(1)[0] == 10.0
+# df.S(2)[1] -> 40.0
+assert df_b1.S(2)[1] == 40.0
+print("PASSED")
+
+# ----------------------------------------------------------------
+# Test B2: add_matrix_column, (i,j) access, [row] indexing
+# ----------------------------------------------------------------
+print("\n=== Test B2: matrix column basic ===", end=" ", flush=True)
+df_b2 = pdf.DataFrame()
+df_b2.add_uniform_index("t", [0, 1])
+df_b2.add_matrix_column("M", [[[1.0,2.0,3.0],[4.0,5.0,6.0]],
+                                [[7.0,8.0,9.0],[10.0,11.0,12.0]]])
+assert df_b2.column_shape("M") == [2, 3]
+assert df_b2.num_rows() == 2
+# df.M(1,1) -> [1,7]
+m11 = df_b2.M(1, 1)
+assert m11.get_column("M") == [1.0, 7.0]
+# df.M(2,3) -> [6,12]
+m23 = df_b2.M(2, 3)
+assert m23.get_column("M") == [6.0, 12.0]
+# df.M(2,3)[0] -> 6.0
+assert df_b2.M(2, 3)[0] == 6.0
+assert df_b2.M(2, 3)[1] == 12.0
+print("PASSED")
+
+# ----------------------------------------------------------------
+# Test B3: get_list_element / get_matrix_element explicit methods
+# ----------------------------------------------------------------
+print("\n=== Test B3: explicit get_list_element / get_matrix_element ===", end=" ", flush=True)
+e1 = df_b1.get_list_element("S", 1)
+assert e1.get_column("S") == [10.0, 30.0, 50.0]
+e2 = df_b1.get_list_element("S", 2)
+assert e2.get_column("S") == [20.0, 40.0, 60.0]
+me = df_b2.get_matrix_element("M", 1, 2)
+assert me.get_column("M") == [2.0, 8.0]
+print("PASSED")
+
+# ----------------------------------------------------------------
+# Test B4: loc with list column (shape-aware gather)
+# ----------------------------------------------------------------
+print("\n=== Test B4: loc with list column ===", end=" ", flush=True)
+sub_b4 = df_b1.loc(1)  # fix f=2.0
+assert sub_b4.num_rows() == 1
+assert sub_b4.column_shape("S") == [2]
+assert sub_b4.S(1)[0] == 30.0
+assert sub_b4.S(2)[0] == 40.0
+print("PASSED")
+
+# ----------------------------------------------------------------
+# Test B5: slice with list column
+# ----------------------------------------------------------------
+print("\n=== Test B5: slice with list column ===", end=" ", flush=True)
+df_b5 = pdf.DataFrame()
+df_b5.add_uniform_index("f", [1.0, 2.0, 3.0, 4.0])
+df_b5.add_list_column("S", [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]])
+sl = df_b5.slice(1, 3)
+assert sl.num_rows() == 2
+assert sl.column_shape("S") == [2]
+assert sl.S(1).get_column("S") == [3.0, 5.0]
+assert sl.S(2).get_column("S") == [4.0, 6.0]
+print("PASSED")
+
+# ----------------------------------------------------------------
+# Test B6: column_kind, is_independent/dependent/scalar/list/matrix
+# ----------------------------------------------------------------
+print("\n=== Test B6: ColumnKind predicates ===", end=" ", flush=True)
+df_b6 = pdf.DataFrame()
+df_b6.add_uniform_index("f", [1.0, 2.0])
+df_b6.add_column("v", [10.0, 20.0])
+df_b6.add_list_column("S", [[1.0, 2.0], [3.0, 4.0]])
+df_b6.add_matrix_column("M", [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
+
+# column_kind enum
+assert df_b6.column_kind("f") == pdf.ColumnKind.Independent
+assert df_b6.column_kind("v") == pdf.ColumnKind.Scalar
+assert df_b6.column_kind("S") == pdf.ColumnKind.List
+assert df_b6.column_kind("M") == pdf.ColumnKind.Matrix
+
+# is_independent / is_dependent
+assert df_b6.is_independent("f")
+assert not df_b6.is_independent("v")
+assert not df_b6.is_dependent("f")
+assert df_b6.is_dependent("v")
+assert df_b6.is_dependent("S")
+assert df_b6.is_dependent("M")
+
+# is_scalar (index cols have empty shape -> scalar)
+assert df_b6.is_scalar("f")
+assert df_b6.is_scalar("v")
+assert not df_b6.is_scalar("S")
+assert not df_b6.is_scalar("M")
+
+# is_list / is_matrix
+assert not df_b6.is_list("v")
+assert df_b6.is_list("S")
+assert not df_b6.is_list("M")
+assert not df_b6.is_matrix("v")
+assert not df_b6.is_matrix("S")
+assert df_b6.is_matrix("M")
+
+# is_index still works (backward compat)
+assert df_b6.is_index("f")
+assert not df_b6.is_index("v")
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

@@ -189,9 +189,19 @@ struct ColumnStorage : ColumnStorageBase {
 class Column {
 public:
     DType tag;
-    std::string quantity;   // quantity key, e.g. "voltage" or "frequency"
+    std::string quantity;              // quantity key, e.g. "voltage" or "frequency"
+    std::vector<std::size_t> shape;    // [] = scalar, {n} = 1-D list, {m,n} = 2-D matrix
+                                       // flat storage holds num_rows * elem_per_row() elements
 
     Column() : tag(DType::Int), storage_(std::make_shared<ColumnStorage<int>>()) {}
+
+    // Number of scalar elements per conceptual row (1 for ordinary scalar columns).
+    std::size_t elem_per_row() const {
+        if (shape.empty()) return 1;
+        std::size_t r = 1;
+        for (auto s : shape) r *= s;
+        return r;
+    }
 
     // Named construction helpers -- prefer the generic make_column<T>() free function.
     static Column from_int(const std::vector<int>& v) {
@@ -215,16 +225,35 @@ public:
 
     std::string dtype_name() const { return dtype_to_string(tag); }
 
-    std::string to_string(std::size_t row) const { return storage_->to_string_at(row); }
+    // Display a conceptual row as a string.
+    // For scalar columns this returns the element at `row`; for list/matrix columns
+    // it returns a bracketed representation such as "[1,2,3]".
+    std::string to_string(std::size_t row) const {
+        std::size_t epr = elem_per_row();
+        if (epr == 1) return storage_->to_string_at(row);
+        std::string s = "[";
+        for (std::size_t e = 0; e < epr; ++e) {
+            if (e > 0) s += ",";
+            s += storage_->to_string_at(row * epr + e);
+        }
+        return s + "]";
+    }
+
+    // Return a single element's string at (row, elem_0based).
+    std::string element_to_string(std::size_t row, std::size_t elem) const {
+        return storage_->to_string_at(row * elem_per_row() + elem);
+    }
 
     Column clone() const {
-        Column c; c.tag = tag; c.quantity = quantity;
+        Column c; c.tag = tag; c.quantity = quantity; c.shape = shape;
         c.storage_ = storage_->do_clone(); return c;
     }
 
+    // slice rows [start, end) -- shape-aware.
     Column slice(std::size_t start, std::size_t end) const {
-        Column c; c.tag = tag; c.quantity = quantity;
-        c.storage_ = storage_->do_slice(start, end); return c;
+        std::size_t epr = elem_per_row();
+        Column c; c.tag = tag; c.quantity = quantity; c.shape = shape;
+        c.storage_ = storage_->do_slice(start * epr, end * epr); return c;
     }
 
     // Repeat each element n times: [a,b] repeat_each(3) -> [a,a,a,b,b,b]
@@ -233,10 +262,21 @@ public:
         c.storage_ = storage_->do_repeat_each(n); return c;
     }
 
-    // Gather specific rows by index
+    // Gather specific rows by index -- shape-aware for list/matrix columns.
     Column gather(const std::vector<std::size_t>& row_indices) const {
-        Column c; c.tag = tag; c.quantity = quantity;
-        c.storage_ = storage_->do_gather(row_indices); return c;
+        std::size_t epr = elem_per_row();
+        if (epr == 1) {
+            Column c; c.tag = tag; c.quantity = quantity;
+            c.storage_ = storage_->do_gather(row_indices); return c;
+        }
+        // Expand row indices into element indices.
+        std::vector<std::size_t> elem_idx;
+        elem_idx.reserve(row_indices.size() * epr);
+        for (auto r : row_indices)
+            for (std::size_t e = 0; e < epr; ++e)
+                elem_idx.push_back(r * epr + e);
+        Column c; c.tag = tag; c.quantity = quantity; c.shape = shape;
+        c.storage_ = storage_->do_gather(elem_idx); return c;
     }
 
     // Repeat each element a variable number of times:
@@ -263,6 +303,36 @@ public:
     bool value_equals(std::size_t row_a, const Column& other, std::size_t row_b) const {
         if (tag != other.tag) return false;
         return storage_->value_equals_at(row_a, *other.storage_, row_b);
+    }
+
+    // --- List / matrix element extraction (produce a scalar Column) ---
+
+    // Extract the i-th element (0-based) from a 1-D list column.
+    // Result is a scalar Column of size num_rows().
+    Column extract_list_element(std::size_t i) const {
+        std::size_t n = shape[0];
+        std::size_t nrows = storage_->size() / n;
+        std::vector<std::size_t> idx;
+        idx.reserve(nrows);
+        for (std::size_t r = 0; r < nrows; ++r)
+            idx.push_back(r * n + i);
+        Column c; c.tag = tag; c.quantity = quantity; // scalar: no shape
+        c.storage_ = storage_->do_gather(idx);
+        return c;
+    }
+
+    // Extract the (i, j)-th element (both 0-based) from a 2-D matrix column.
+    // Result is a scalar Column of size num_rows().
+    Column extract_matrix_element(std::size_t i, std::size_t j) const {
+        std::size_t mrows = shape[0], mcols = shape[1];
+        std::size_t nrows = storage_->size() / (mrows * mcols);
+        std::vector<std::size_t> idx;
+        idx.reserve(nrows);
+        for (std::size_t r = 0; r < nrows; ++r)
+            idx.push_back(r * mrows * mcols + i * mcols + j);
+        Column c; c.tag = tag; c.quantity = quantity;
+        c.storage_ = storage_->do_gather(idx);
+        return c;
     }
 
     // Typed accessors -- caller must ensure T matches tag (undefined behaviour otherwise).
@@ -434,6 +504,95 @@ public:
         insert_column<T>(0, name, data, quantity);
     }
 
+    // add_list_column: each row holds a fixed-length list of T.
+    // data[i] must all have the same size; that size becomes shape[0].
+    // Indexing: get_list_element(name, k) where k is 1-based.
+    template <typename T>
+    void add_list_column(const std::string& name,
+                         const std::vector<std::vector<T>>& data,
+                         const std::string& quantity = "") {
+        if (has_column(name))
+            throw std::invalid_argument("Column '" + name + "' already exists");
+        if (data.empty()) {
+            Column col; col.tag = DTypeTag<T>::value; col.quantity = quantity;
+            col.shape = {0};
+            col_order_.push_back(name);
+            columns_[name] = col;
+            return;
+        }
+        std::size_t n = data[0].size();
+        if (n == 0)
+            throw std::invalid_argument(
+                "List column '" + name + "': inner lists cannot be empty");
+        for (const auto& row : data)
+            if (row.size() != n)
+                throw std::invalid_argument(
+                    "List column '" + name + "': all rows must have length " +
+                    std::to_string(n));
+        if (!col_order_.empty() && data.size() != num_rows())
+            throw std::invalid_argument(
+                "List column '" + name + "' has " + std::to_string(data.size()) +
+                " rows, expected " + std::to_string(num_rows()));
+        std::vector<T> flat;
+        flat.reserve(data.size() * n);
+        for (const auto& row : data)
+            flat.insert(flat.end(), row.begin(), row.end());
+        Column col = make_column<T>(flat);
+        col.quantity = quantity;
+        col.shape = {n};
+        col_order_.push_back(name);
+        columns_[name] = col;
+    }
+
+    // add_matrix_column: each row holds a fixed m×n matrix of T (row-major).
+    // data[i] is a vector of m vectors each of length n.
+    // Indexing: get_matrix_element(name, i, j) where i,j are 1-based.
+    template <typename T>
+    void add_matrix_column(const std::string& name,
+                           const std::vector<std::vector<std::vector<T>>>& data,
+                           const std::string& quantity = "") {
+        if (has_column(name))
+            throw std::invalid_argument("Column '" + name + "' already exists");
+        if (data.empty()) {
+            Column col; col.tag = DTypeTag<T>::value; col.quantity = quantity;
+            col.shape = {0, 0};
+            col_order_.push_back(name);
+            columns_[name] = col;
+            return;
+        }
+        if (data[0].empty())
+            throw std::invalid_argument(
+                "Matrix column '" + name + "': inner matrix has zero rows");
+        std::size_t mrows = data[0].size();
+        std::size_t mcols = data[0][0].size();
+        if (mcols == 0)
+            throw std::invalid_argument(
+                "Matrix column '" + name + "': inner matrix has zero columns");
+        for (const auto& mat : data) {
+            if (mat.size() != mrows)
+                throw std::invalid_argument(
+                    "Matrix column '" + name + "': inconsistent matrix row count");
+            for (const auto& row : mat)
+                if (row.size() != mcols)
+                    throw std::invalid_argument(
+                        "Matrix column '" + name + "': inconsistent matrix column count");
+        }
+        if (!col_order_.empty() && data.size() != num_rows())
+            throw std::invalid_argument(
+                "Matrix column '" + name + "' has " + std::to_string(data.size()) +
+                " rows, expected " + std::to_string(num_rows()));
+        std::vector<T> flat;
+        flat.reserve(data.size() * mrows * mcols);
+        for (const auto& mat : data)
+            for (const auto& row : mat)
+                flat.insert(flat.end(), row.begin(), row.end());
+        Column col = make_column<T>(flat);
+        col.quantity = quantity;
+        col.shape = {mrows, mcols};
+        col_order_.push_back(name);
+        columns_[name] = col;
+    }
+
     void remove_column(const std::string& name) {
         auto it = columns_.find(name);
         if (it == columns_.end()) {
@@ -529,8 +688,9 @@ public:
     // --- Shape & element access ---
 
     std::size_t num_rows() const {
-        if (columns_.empty()) return 0;
-        return columns_.begin()->second.size();
+        if (col_order_.empty()) return 0;
+        const Column& col = columns_.at(col_order_.front());
+        return col.size() / col.elem_per_row();
     }
 
     std::size_t num_columns() const {
@@ -585,7 +745,6 @@ public:
 
         // Build row-index labels when multi-index is present (e.g. "0,2,1")
         bool has_idx = !index_dims_.empty();
-        // Ragged dims can't use multi_index() labels; uniform and regular grouped can.
         bool has_ragged_dim = false;
         for (const auto& dim : index_dims_)
             if (dim.is_grouped() && !dim.is_regular_grouped()) { has_ragged_dim = true; break; }
@@ -601,23 +760,53 @@ public:
                         label += std::to_string(mi[d]);
                     }
                 } else {
-                    // For ragged layouts, show row number only
                     label = std::to_string(r);
                 }
                 if (label.size() > idx_col_w) idx_col_w = label.size();
                 row_labels.push_back(label);
             }
-            // header placeholder width (blank)
             if (idx_col_w == 0) idx_col_w = 1;
         }
 
-        // Compute column widths
-        std::vector<std::size_t> widths;
+        // Build display columns: expand list/matrix columns.
+        // Each entry: (header, col_name, elem_idx)
+        //   elem_idx == SIZE_MAX  => scalar column, use col.to_string(row)
+        //   elem_idx < SIZE_MAX   => array column, use col.element_to_string(row, elem_idx)
+        struct DisplayCol { std::string header; std::string col_name; std::size_t elem; };
+        std::vector<DisplayCol> dcols;
         for (const auto& name : col_order_) {
-            std::size_t w = name.size();
             auto it = columns_.find(name);
+            const Column& col = it->second;
+            const auto& sh = col.shape;
+            if (sh.empty()) {
+                // Scalar column
+                std::string hdr = name;
+                if (!col.quantity.empty()) hdr += "(" + col.quantity + ")";
+                dcols.push_back({hdr, name, ~std::size_t(0)});
+            } else if (sh.size() == 1) {
+                // List column: expand to name(1), name(2), ...
+                for (std::size_t k = 0; k < sh[0]; ++k)
+                    dcols.push_back({name + "(" + std::to_string(k + 1) + ")", name, k});
+            } else {
+                // Matrix column: expand to name(i,j)
+                for (std::size_t i = 0; i < sh[0]; ++i)
+                    for (std::size_t j = 0; j < sh[1]; ++j)
+                        dcols.push_back({name + "(" + std::to_string(i + 1) + "," +
+                                         std::to_string(j + 1) + ")", name, i * sh[1] + j});
+            }
+        }
+
+        // Compute column widths (header vs cell values)
+        std::vector<std::size_t> widths;
+        for (const auto& dc : dcols) {
+            std::size_t w = dc.header.size();
+            auto it = columns_.find(dc.col_name);
             for (std::size_t r = 0; r < display_rows; ++r) {
-                std::size_t len = it->second.to_string(r).size();
+                std::size_t len;
+                if (dc.elem == ~std::size_t(0))
+                    len = it->second.to_string(r).size();
+                else
+                    len = it->second.element_to_string(r, dc.elem).size();
                 if (len > w) w = len;
             }
             widths.push_back(w);
@@ -625,29 +814,14 @@ public:
 
         std::ostringstream ss;
 
-        // Header (name + quantity key if present)
-        std::vector<std::string> headers;
-        for (const auto& name : col_order_) {
-            auto it = columns_.find(name);
-            if (it->second.quantity.empty()) {
-                headers.push_back(name);
-            } else {
-                headers.push_back(name + "(" + it->second.quantity + ")");
-            }
-        }
-        // Recompute widths with headers
-        for (std::size_t c = 0; c < headers.size(); ++c) {
-            if (headers[c].size() > widths[c]) widths[c] = headers[c].size();
-        }
-
-        // Print header row: optional blank index column first
+        // Print header row
         if (has_idx) {
             for (std::size_t i = 0; i < idx_col_w; ++i) ss << ' ';
             ss << " | ";
         }
-        for (std::size_t c = 0; c < col_order_.size(); ++c) {
+        for (std::size_t c = 0; c < dcols.size(); ++c) {
             if (c > 0) ss << " | ";
-            ss << std::setw(static_cast<int>(widths[c])) << std::right << headers[c];
+            ss << std::setw(static_cast<int>(widths[c])) << std::right << dcols[c].header;
         }
         ss << "\n";
 
@@ -656,7 +830,7 @@ public:
             for (std::size_t i = 0; i < idx_col_w; ++i) ss << '-';
             ss << "-+-";
         }
-        for (std::size_t c = 0; c < col_order_.size(); ++c) {
+        for (std::size_t c = 0; c < dcols.size(); ++c) {
             if (c > 0) ss << "-+-";
             for (std::size_t i = 0; i < widths[c]; ++i) ss << '-';
         }
@@ -668,11 +842,13 @@ public:
                 ss << std::setw(static_cast<int>(idx_col_w)) << std::right << row_labels[r];
                 ss << " | ";
             }
-            for (std::size_t c = 0; c < col_order_.size(); ++c) {
+            for (std::size_t c = 0; c < dcols.size(); ++c) {
                 if (c > 0) ss << " | ";
-                auto it = columns_.find(col_order_[c]);
-                ss << std::setw(static_cast<int>(widths[c])) << std::right
-                   << it->second.to_string(r);
+                auto it = columns_.find(dcols[c].col_name);
+                std::string cell = (dcols[c].elem == ~std::size_t(0))
+                    ? it->second.to_string(r)
+                    : it->second.element_to_string(r, dcols[c].elem);
+                ss << std::setw(static_cast<int>(widths[c])) << std::right << cell;
             }
             ss << "\n";
         }
@@ -915,6 +1091,45 @@ public:
         for (const auto& dim : index_dims_)
             if (dim.name == name) return true;
         return false;
+    }
+
+    // Alias: clearer naming.
+    bool is_independent(const std::string& name) const { return is_index(name); }
+
+    bool is_dependent(const std::string& name) const {
+        if (!has_column(name))
+            throw std::invalid_argument("Column '" + name + "' not found");
+        return !is_index(name);
+    }
+
+    // Column shape predicates (applicable to both index and dependent columns).
+    bool is_scalar(const std::string& name) const {
+        return get_col(name).shape.empty();
+    }
+
+    bool is_list(const std::string& name) const {
+        return get_col(name).shape.size() == 1;
+    }
+
+    bool is_matrix(const std::string& name) const {
+        return get_col(name).shape.size() == 2;
+    }
+
+    // column_kind: single call to classify a column fully.
+    //   Independent  -- index/independent dimension (scalar)
+    //   Scalar       -- dependent, no shape (ordinary column)
+    //   List         -- dependent with 1-D shape  (list column)
+    //   Matrix       -- dependent with 2-D shape  (matrix column)
+    enum class ColumnKind { Independent, Scalar, List, Matrix };
+
+    ColumnKind column_kind(const std::string& name) const {
+        if (!has_column(name))
+            throw std::invalid_argument("Column '" + name + "' not found");
+        if (is_index(name)) return ColumnKind::Independent;
+        const auto& sh = get_col(name).shape;
+        if (sh.empty())   return ColumnKind::Scalar;
+        if (sh.size() == 1) return ColumnKind::List;
+        return ColumnKind::Matrix;
     }
 
     std::vector<std::string> dependent_names() const {
@@ -1562,6 +1777,73 @@ public:
             rebuild_index_dims(*result);
             return result;
         }
+    }
+
+    // --- List / matrix column element extraction ---
+
+    // Query the shape of a column: empty for scalar, {n} for 1-D list, {m,n} for matrix.
+    std::vector<std::size_t> column_shape(const std::string& name) const {
+        return get_col(name).shape;
+    }
+
+    // get_list_element: extract the idx-th element (1-based) from a list column.
+    // Returns a new DataFrame containing the same index columns plus a scalar column
+    // with the same name holding the extracted values.
+    std::shared_ptr<DataFrame> get_list_element(const std::string& name,
+                                                std::size_t idx) const {
+        if (!has_column(name))
+            throw std::invalid_argument("Column '" + name + "' not found");
+        const Column& col = get_col(name);
+        if (col.shape.size() != 1)
+            throw std::invalid_argument(
+                "Column '" + name + "' is not a 1-D list column");
+        std::size_t n = col.shape[0];
+        if (idx < 1 || idx > n)
+            throw std::out_of_range(
+                "List index " + std::to_string(idx) +
+                " out of range (1.." + std::to_string(n) + ")");
+        auto result = std::make_shared<DataFrame>();
+        for (const auto& dim : index_dims_) {
+            result->col_order_.push_back(dim.name);
+            result->columns_[dim.name] = columns_.find(dim.name)->second.clone();
+        }
+        result->index_dims_ = index_dims_;
+        result->col_order_.push_back(name);
+        result->columns_[name] = col.extract_list_element(idx - 1);
+        result->type_ = type_;
+        return result;
+    }
+
+    // get_matrix_element: extract the (row_idx, col_idx) element (both 1-based) from a
+    // matrix column.  Returns a new DataFrame with the extracted scalar column.
+    std::shared_ptr<DataFrame> get_matrix_element(const std::string& name,
+                                                  std::size_t row_idx,
+                                                  std::size_t col_idx) const {
+        if (!has_column(name))
+            throw std::invalid_argument("Column '" + name + "' not found");
+        const Column& col = get_col(name);
+        if (col.shape.size() != 2)
+            throw std::invalid_argument(
+                "Column '" + name + "' is not a 2-D matrix column");
+        std::size_t mrows = col.shape[0], mcols = col.shape[1];
+        if (row_idx < 1 || row_idx > mrows)
+            throw std::out_of_range(
+                "Row index " + std::to_string(row_idx) +
+                " out of range (1.." + std::to_string(mrows) + ")");
+        if (col_idx < 1 || col_idx > mcols)
+            throw std::out_of_range(
+                "Col index " + std::to_string(col_idx) +
+                " out of range (1.." + std::to_string(mcols) + ")");
+        auto result = std::make_shared<DataFrame>();
+        for (const auto& dim : index_dims_) {
+            result->col_order_.push_back(dim.name);
+            result->columns_[dim.name] = columns_.find(dim.name)->second.clone();
+        }
+        result->index_dims_ = index_dims_;
+        result->col_order_.push_back(name);
+        result->columns_[name] = col.extract_matrix_element(row_idx - 1, col_idx - 1);
+        result->type_ = type_;
+        return result;
     }
 
     // --- Metadata (inherited by loc / sub results) ---

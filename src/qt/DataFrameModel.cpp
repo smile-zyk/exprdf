@@ -18,8 +18,40 @@ void DataFrameModel::setDataFrame(const std::shared_ptr<DataFrame>& df)
     if (df_) {
         int total = static_cast<int>(df_->num_rows());
         fetched_rows_ = total < FETCH_BATCH ? total : FETCH_BATCH;
+        rebuildExpandedCols();
+    } else {
+        expanded_cols_.clear();
     }
     endResetModel();
+}
+
+void DataFrameModel::rebuildExpandedCols()
+{
+    expanded_cols_.clear();
+    if (!df_) return;
+    std::size_t ncols = df_->num_columns();
+    for (std::size_t ci = 0; ci < ncols; ++ci) {
+        const std::string& name = df_->column_name(ci);
+        const Column& col = df_->get_column(name);
+        const auto& sh = col.shape;
+        if (sh.empty()) {
+            // Scalar column
+            std::string hdr = name;
+            if (!col.quantity.empty()) hdr += "(" + col.quantity + ")";
+            expanded_cols_.push_back({name, hdr, ~std::size_t(0)});
+        } else if (sh.size() == 1) {
+            for (std::size_t k = 0; k < sh[0]; ++k)
+                expanded_cols_.push_back({name,
+                    name + "(" + std::to_string(k + 1) + ")", k});
+        } else {
+            for (std::size_t i = 0; i < sh[0]; ++i)
+                for (std::size_t j = 0; j < sh[1]; ++j)
+                    expanded_cols_.push_back({name,
+                        name + "(" + std::to_string(i + 1) + "," +
+                               std::to_string(j + 1) + ")",
+                        i * sh[1] + j});
+        }
+    }
 }
 
 std::shared_ptr<DataFrame> DataFrameModel::dataFrame() const
@@ -41,7 +73,7 @@ int DataFrameModel::rowCount(const QModelIndex& parent) const
 int DataFrameModel::columnCount(const QModelIndex& parent) const
 {
     if (parent.isValid() || !df_) return 0;
-    return static_cast<int>(df_->num_columns());
+    return static_cast<int>(expanded_cols_.size());
 }
 
 QVariant DataFrameModel::data(const QModelIndex& index, int role) const
@@ -50,14 +82,13 @@ QVariant DataFrameModel::data(const QModelIndex& index, int role) const
     if (role != Qt::DisplayRole) return QVariant();
 
     std::size_t row = static_cast<std::size_t>(index.row());
-    std::size_t col_idx = static_cast<std::size_t>(index.column());
-    if (row >= df_->num_rows() || col_idx >= df_->num_columns()) {
+    std::size_t dcol = static_cast<std::size_t>(index.column());
+    if (row >= df_->num_rows() || dcol >= expanded_cols_.size())
         return QVariant();
-    }
 
-    const std::string& col_name = df_->column_name(col_idx);
-    const Column& col = df_->get_column(col_name);
-    return formatCell(col, row);
+    const ExpandedCol& ec = expanded_cols_[dcol];
+    const Column& col = df_->get_column(ec.col_name);
+    return formatCell(col, row, ec.elem);
 }
 
 QVariant DataFrameModel::headerData(int section, Qt::Orientation orientation,
@@ -66,13 +97,12 @@ QVariant DataFrameModel::headerData(int section, Qt::Orientation orientation,
     if (!df_ || role != Qt::DisplayRole) return QVariant();
 
     if (orientation == Qt::Horizontal) {
-        if (section < 0 || static_cast<std::size_t>(section) >= df_->num_columns())
+        if (section < 0 || static_cast<std::size_t>(section) >= expanded_cols_.size())
             return QVariant();
-        return QString::fromStdString(df_->column_name(static_cast<std::size_t>(section)));
+        return QString::fromStdString(expanded_cols_[static_cast<std::size_t>(section)].header);
     } else {
-        if (section < 0 || static_cast<std::size_t>(section) >= df_->num_rows()) {
+        if (section < 0 || static_cast<std::size_t>(section) >= df_->num_rows())
             return QVariant();
-        }
         return rowHeader(static_cast<std::size_t>(section));
     }
 }
@@ -98,8 +128,13 @@ void DataFrameModel::fetchMore(const QModelIndex& parent)
     endInsertRows();
 }
 
-QString DataFrameModel::formatCell(const Column& col, std::size_t row) const
+QString DataFrameModel::formatCell(const Column& col, std::size_t row, std::size_t elem) const
 {
+    // Array (list/matrix) column: display the single expanded element.
+    if (!col.shape.empty()) {
+        return QString::fromStdString(col.element_to_string(row, elem));
+    }
+
     const std::string& qty = col.quantity;
 
     switch (col.tag) {

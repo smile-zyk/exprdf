@@ -71,5 +71,47 @@ int main(int argc, char* argv[])
     view.resize(900, 700);
     view.show();
 
+    // ----------------------------------------------------------------
+    // List column example: S-parameters at each frequency point
+    //   Each row stores [S11_re, S11_im, S21_re, S21_im] — a 4-element list
+    // ----------------------------------------------------------------
+    auto df_list = std::make_shared<exprdf::DataFrame>();
+    df_list->set_name("S-params (list column)");
+    df_list->add_uniform_index<double>("freq_GHz", {1.0, 2.0, 4.0, 8.0, 10.0});
+    df_list->add_list_column<double>("S",
+        {
+            {  0.80, -0.12,  0.50,  0.40 },   // f=1 GHz: [S11re, S11im, S21re, S21im]
+            {  0.70, -0.25,  0.55,  0.55 },   // f=2 GHz
+            {  0.50, -0.45,  0.48,  0.60 },   // f=4 GHz
+            {  0.20, -0.60,  0.30,  0.52 },   // f=8 GHz
+            {  0.10, -0.65,  0.20,  0.40 }    // f=10 GHz
+        });
+    df_list->add_column<double>("Gain_dB", {12.1, 13.5, 14.2, 12.8, 10.5});
+
+    // ----------------------------------------------------------------
+    // Matrix column example: 2-port Y-matrix (2×2 complex) stored as
+    //   a 2×2 real matrix per row — 4 entries (re/im interleaved not used here,
+    //   just magnitude of each Yij for simplicity).
+    //   Rows index frequency.
+    // ----------------------------------------------------------------
+    auto df_mat = std::make_shared<exprdf::DataFrame>();
+    df_mat->set_name("Y-matrix (matrix column)");
+    df_mat->add_uniform_index<double>("freq_GHz", {1.0, 2.0, 4.0, 8.0});
+    // Each row: 2×2 matrix  [ [Y11, Y12], [Y21, Y22] ]
+    df_mat->add_matrix_column<double>("Y",
+        {
+            { {0.010, 0.003}, {0.003, 0.008} },   // f=1 GHz
+            { {0.018, 0.005}, {0.005, 0.015} },   // f=2 GHz
+            { {0.030, 0.008}, {0.008, 0.025} },   // f=4 GHz
+            { {0.045, 0.012}, {0.012, 0.038} }    // f=8 GHz
+        });
+    df_mat->add_column<double>("Z11_Ohm", {100.0, 55.6, 33.3, 22.2});
+
+    exprdf::DataFrameView view2;
+    view2.setDataFrames({df_list, df_mat});
+    view2.setWindowTitle("List & Matrix column examples");
+    view2.resize(900, 400);
+    view2.show();
+
     return app.exec();
 }

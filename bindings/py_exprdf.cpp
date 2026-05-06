@@ -5,10 +5,51 @@
 
 namespace py = pybind11;
 
+// ----------------------------------------------------------------
+// ColumnGroupProxy: returned by df.col_name when col_name is a
+// list or matrix column.  Calling the proxy extracts the element:
+//   proxy(i)    -> df.get_list_element(name, i)        [1-based]
+//   proxy(i, j) -> df.get_matrix_element(name, i, j)   [1-based]
+// ----------------------------------------------------------------
+struct ColumnGroupProxy {
+    std::shared_ptr<exprdf::DataFrame> df;
+    std::string col_name;
+};
+
 PYBIND11_MODULE(exprdf, m) {
     m.doc() = "exprdf: header-only C++ DataFrame library with multi-index support.\n"
               "Column types: int, double, str, complex.\n"
               "Index kinds : Uniform (Cartesian) and Grouped (equal or ragged).";
+
+    // ----------------------------------------------------------------
+    // ColumnKind enum
+    // ----------------------------------------------------------------
+    py::enum_<exprdf::DataFrame::ColumnKind>(m, "ColumnKind")
+        .value("Independent", exprdf::DataFrame::ColumnKind::Independent)
+        .value("Scalar",      exprdf::DataFrame::ColumnKind::Scalar)
+        .value("List",        exprdf::DataFrame::ColumnKind::List)
+        .value("Matrix",      exprdf::DataFrame::ColumnKind::Matrix)
+        .export_values();
+
+    // ----------------------------------------------------------------
+    // ColumnGroupProxy
+    // ----------------------------------------------------------------
+    py::class_<ColumnGroupProxy>(m, "ColumnGroupProxy")
+        .def("__call__", [](const ColumnGroupProxy& self, py::args args) -> py::object {
+            if (args.size() == 1) {
+                std::size_t i = args[0].cast<std::size_t>();
+                return py::cast(self.df->get_list_element(self.col_name, i));
+            } else if (args.size() == 2) {
+                std::size_t i = args[0].cast<std::size_t>();
+                std::size_t j = args[1].cast<std::size_t>();
+                return py::cast(self.df->get_matrix_element(self.col_name, i, j));
+            }
+            throw py::value_error(
+                "ColumnGroupProxy: expected 1 (list) or 2 (matrix) index arguments");
+        })
+        .def("__repr__", [](const ColumnGroupProxy& self) {
+            return "<ColumnGroupProxy '" + self.col_name + "'>";
+        });
 
     // ----------------------------------------------------------------
     // IndexDim
@@ -255,6 +296,20 @@ PYBIND11_MODULE(exprdf, m) {
              "Get column quantity")
         .def("set_column_quantity", &exprdf::DataFrame::set_column_quantity,
              py::arg("name"), py::arg("quantity"), "Set column quantity")
+        .def("column_shape", &exprdf::DataFrame::column_shape, py::arg("name"),
+             "Get shape of a column: [] = scalar, [n] = list, [m,n] = matrix")
+        .def("column_kind", &exprdf::DataFrame::column_kind, py::arg("name"),
+             "Classify column: Independent / Scalar / List / Matrix")
+        .def("is_independent", &exprdf::DataFrame::is_independent, py::arg("name"),
+             "True if column is an index (independent) dimension")
+        .def("is_dependent", &exprdf::DataFrame::is_dependent, py::arg("name"),
+             "True if column is a dependent (data) column")
+        .def("is_scalar", &exprdf::DataFrame::is_scalar, py::arg("name"),
+             "True if column has no shape (ordinary scalar column)")
+        .def("is_list", &exprdf::DataFrame::is_list, py::arg("name"),
+             "True if column is a 1-D list column")
+        .def("is_matrix", &exprdf::DataFrame::is_matrix, py::arg("name"),
+             "True if column is a 2-D matrix column")
         .def("num_rows", &exprdf::DataFrame::num_rows)
         .def("num_columns", &exprdf::DataFrame::num_columns)
         .def("head", &exprdf::DataFrame::head, py::arg("n") = 5)
@@ -288,24 +343,44 @@ PYBIND11_MODULE(exprdf, m) {
         .def("__repr__", [](const exprdf::DataFrame& self) {
             return self.to_string();
         })
-        .def("__getitem__", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
-            if (!self.has_column(name))
-                throw py::key_error("Column '" + name + "' not found");
-            std::string dt = self.column_dtype(name);
-            if (dt == "int")
-                return py::cast(self.get_column_as<int>(name));
-            else if (dt == "double")
-                return py::cast(self.get_column_as<double>(name));
-            else if (dt == "string")
-                return py::cast(self.get_column_as<std::string>(name));
-            else if (dt == "complex")
-                return py::cast(self.get_column_as<std::complex<double>>(name));
-            throw std::runtime_error("Unknown dtype: " + dt);
+        .def("__getitem__", [](const exprdf::DataFrame& self, py::object key) -> py::object {
+            if (py::isinstance<py::str>(key)) {
+                std::string name = key.cast<std::string>();
+                if (!self.has_column(name))
+                    throw py::key_error("Column '" + name + "' not found");
+                std::string dt = self.column_dtype(name);
+                if (dt == "int")
+                    return py::cast(self.get_column_as<int>(name));
+                else if (dt == "double")
+                    return py::cast(self.get_column_as<double>(name));
+                else if (dt == "string")
+                    return py::cast(self.get_column_as<std::string>(name));
+                else if (dt == "complex")
+                    return py::cast(self.get_column_as<std::complex<double>>(name));
+                throw std::runtime_error("Unknown dtype: " + dt);
+            } else if (py::isinstance<py::int_>(key)) {
+                // Integer row index: return value at that row from the last column.
+                std::size_t row = key.cast<std::size_t>();
+                if (self.num_columns() == 0)
+                    throw py::index_error("DataFrame has no columns");
+                std::string last = self.column_name(self.num_columns() - 1);
+                std::string dt = self.column_dtype(last);
+                if (dt == "int")    return py::cast(self.at<int>(last, row));
+                if (dt == "double") return py::cast(self.at<double>(last, row));
+                if (dt == "string") return py::cast(self.at<std::string>(last, row));
+                if (dt == "complex") return py::cast(self.at<std::complex<double>>(last, row));
+                throw std::runtime_error("Unknown dtype: " + dt);
+            }
+            throw py::type_error("Expected str column name or int row index");
         })
-        .def("__getattr__", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
-            if (!self.has_column(name))
+        .def("__getattr__", [](std::shared_ptr<exprdf::DataFrame> self, const std::string& name) -> py::object {
+            if (!self->has_column(name))
                 throw py::attribute_error("DataFrame has no attribute '" + name + "'");
-            return py::cast(self.sub(name));
+            // List / matrix columns return a callable proxy.
+            auto sh = self->column_shape(name);
+            if (!sh.empty())
+                return py::cast(ColumnGroupProxy{self, name});
+            return py::cast(self->sub(name));
         })
 
         // ----------------------------------------------------------------
@@ -483,8 +558,6 @@ PYBIND11_MODULE(exprdf, m) {
              "Check if a column is an independent (index) column")
         .def("dependent_names", &exprdf::DataFrame::dependent_names,
              "Names of dependent (data) columns")
-
-        // set_index: promote existing columns to index dimensions (auto-infers kind)
         .def("set_index", [](exprdf::DataFrame& self, py::args args) {
             std::vector<std::string> names;
             if (args.size() == 1 && py::isinstance<py::list>(args[0])) {
@@ -522,6 +595,147 @@ PYBIND11_MODULE(exprdf, m) {
 
         .def("sub", &exprdf::DataFrame::sub, py::arg("name"),
              "Extract sub-DataFrame by column name")
+
+        // ----------------------------------------------------------------
+        // List / matrix column construction and element extraction
+        // ----------------------------------------------------------------
+
+        // add_list_column: data is a list-of-lists; all inner lists must be same length.
+        // Indexing via get_list_element(name, k) or df.name(k), both 1-based.
+        .def("add_list_column", [](exprdf::DataFrame& self, const std::string& name,
+                                   py::list data, const std::string& quantity) {
+            if (data.empty()) {
+                self.add_list_column<double>(name, {}, quantity);
+                return;
+            }
+            py::list first_row = data[0].cast<py::list>();
+            if (first_row.empty())
+                throw std::invalid_argument("List column: inner lists cannot be empty");
+            py::object first = first_row[0];
+            bool has_float = false, has_complex = false;
+            for (auto row_item : data) {
+                py::list rl = row_item.cast<py::list>();
+                for (auto item : rl) {
+                    if (py::isinstance<py::float_>(item)) has_float = true;
+                    if (PyComplex_Check(item.ptr())) has_complex = true;
+                }
+            }
+            auto build_vv_dbl = [&]() {
+                std::vector<std::vector<double>> vv;
+                for (auto row_item : data) {
+                    py::list rl = row_item.cast<py::list>();
+                    std::vector<double> row;
+                    for (auto item : rl) row.push_back(item.cast<double>());
+                    vv.push_back(std::move(row));
+                }
+                return vv;
+            };
+            if (has_complex) {
+                std::vector<std::vector<std::complex<double>>> vv;
+                for (auto row_item : data) {
+                    py::list rl = row_item.cast<py::list>();
+                    std::vector<std::complex<double>> row;
+                    for (auto item : rl) row.push_back(item.cast<std::complex<double>>());
+                    vv.push_back(std::move(row));
+                }
+                self.add_list_column<std::complex<double>>(name, vv, quantity);
+            } else if (has_float || !py::isinstance<py::int_>(first) ||
+                       py::isinstance<py::bool_>(first)) {
+                self.add_list_column<double>(name, build_vv_dbl(), quantity);
+            } else {
+                std::vector<std::vector<int>> vv;
+                for (auto row_item : data) {
+                    py::list rl = row_item.cast<py::list>();
+                    std::vector<int> row;
+                    for (auto item : rl) row.push_back(item.cast<int>());
+                    vv.push_back(std::move(row));
+                }
+                self.add_list_column<int>(name, vv, quantity);
+            }
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
+           "Add a list column (data = list of same-length lists); index via df.name(k) [1-based]")
+
+        // add_matrix_column: data is a list of m×n matrices (list-of-list-of-lists).
+        .def("add_matrix_column", [](exprdf::DataFrame& self, const std::string& name,
+                                     py::list data, const std::string& quantity) {
+            if (data.empty()) {
+                self.add_matrix_column<double>(name, {}, quantity);
+                return;
+            }
+            bool has_float = false, has_complex = false;
+            for (auto mat_item : data) {
+                py::list mat_rows = mat_item.cast<py::list>();
+                for (auto mat_row : mat_rows) {
+                    py::list mat_cols = mat_row.cast<py::list>();
+                    for (auto item : mat_cols) {
+                        if (py::isinstance<py::float_>(item)) has_float = true;
+                        if (PyComplex_Check(item.ptr())) has_complex = true;
+                    }
+                }
+            }
+            auto build_vvv_dbl = [&]() {
+                std::vector<std::vector<std::vector<double>>> vvv;
+                for (auto mat_item : data) {
+                    py::list mat_rows = mat_item.cast<py::list>();
+                    std::vector<std::vector<double>> mat;
+                    for (auto mat_row : mat_rows) {
+                        py::list mat_cols = mat_row.cast<py::list>();
+                        std::vector<double> row;
+                        for (auto item : mat_cols) row.push_back(item.cast<double>());
+                        mat.push_back(std::move(row));
+                    }
+                    vvv.push_back(std::move(mat));
+                }
+                return vvv;
+            };
+            if (has_complex) {
+                std::vector<std::vector<std::vector<std::complex<double>>>> vvv;
+                for (auto mat_item : data) {
+                    py::list mat_rows = mat_item.cast<py::list>();
+                    std::vector<std::vector<std::complex<double>>> mat;
+                    for (auto mat_row : mat_rows) {
+                        py::list mat_cols = mat_row.cast<py::list>();
+                        std::vector<std::complex<double>> row;
+                        for (auto item : mat_cols) row.push_back(item.cast<std::complex<double>>());
+                        mat.push_back(std::move(row));
+                    }
+                    vvv.push_back(std::move(mat));
+                }
+                self.add_matrix_column<std::complex<double>>(name, vvv, quantity);
+            } else if (has_float) {
+                self.add_matrix_column<double>(name, build_vvv_dbl(), quantity);
+            } else {
+                // Check if int
+                py::list first_mat = data[0].cast<py::list>();
+                py::object first = first_mat[0].cast<py::list>()[0];
+                if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
+                    std::vector<std::vector<std::vector<int>>> vvv;
+                    for (auto mat_item : data) {
+                        py::list mat_rows = mat_item.cast<py::list>();
+                        std::vector<std::vector<int>> mat;
+                        for (auto mat_row : mat_rows) {
+                            py::list mat_cols = mat_row.cast<py::list>();
+                            std::vector<int> row;
+                            for (auto item : mat_cols) row.push_back(item.cast<int>());
+                            mat.push_back(std::move(row));
+                        }
+                        vvv.push_back(std::move(mat));
+                    }
+                    self.add_matrix_column<int>(name, vvv, quantity);
+                } else {
+                    self.add_matrix_column<double>(name, build_vvv_dbl(), quantity);
+                }
+            }
+        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
+           "Add a matrix column (data = list of m×n matrices); index via df.name(i,j) [1-based]")
+
+        // get_list_element / get_matrix_element: explicit extraction methods.
+        .def("get_list_element", &exprdf::DataFrame::get_list_element,
+             py::arg("name"), py::arg("idx"),
+             "Extract element idx (1-based) from list column -> scalar DataFrame")
+        .def("get_matrix_element", &exprdf::DataFrame::get_matrix_element,
+             py::arg("name"), py::arg("row_idx"), py::arg("col_idx"),
+             "Extract element (row_idx, col_idx) (1-based) from matrix column -> scalar DataFrame")
 
         // ----------------------------------------------------------------
         // Metadata

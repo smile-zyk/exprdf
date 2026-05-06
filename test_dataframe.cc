@@ -1899,6 +1899,140 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // ----------------------------------------------------------------
+    // Test B1: add_list_column + get_list_element (1-based)
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B1: list column basic ===" << std::flush;
+    {
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index("f", std::vector<double>{1.0, 2.0, 3.0});
+        df->add_list_column<double>("S",
+            std::vector<std::vector<double>>{{10.0, 20.0}, {30.0, 40.0}, {50.0, 60.0}});
+        assert(df->column_shape("S") == (std::vector<std::size_t>{2}));
+        assert(df->num_rows() == 3);
+
+        auto s1 = df->get_list_element("S", 1); // 1st element of list per row
+        assert(approx_equal(s1->at<double>("S", 0), 10.0));
+        assert(approx_equal(s1->at<double>("S", 1), 30.0));
+        assert(approx_equal(s1->at<double>("S", 2), 50.0));
+
+        auto s2 = df->get_list_element("S", 2);
+        assert(approx_equal(s2->at<double>("S", 0), 20.0));
+        assert(approx_equal(s2->at<double>("S", 2), 60.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B2: add_matrix_column + get_matrix_element (1-based)
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B2: matrix column basic ===" << std::flush;
+    {
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index("t", std::vector<int>{0, 1});
+        df->add_matrix_column<double>("M",
+            std::vector<std::vector<std::vector<double>>>{
+                {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
+                {{7.0, 8.0, 9.0}, {10.0, 11.0, 12.0}}
+            });
+        assert(df->column_shape("M") == (std::vector<std::size_t>{2, 3}));
+        assert(df->num_rows() == 2);
+
+        auto m11 = df->get_matrix_element("M", 1, 1);
+        assert(approx_equal(m11->at<double>("M", 0), 1.0));
+        assert(approx_equal(m11->at<double>("M", 1), 7.0));
+
+        auto m23 = df->get_matrix_element("M", 2, 3);
+        assert(approx_equal(m23->at<double>("M", 0), 6.0));
+        assert(approx_equal(m23->at<double>("M", 1), 12.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B3: loc on DataFrame with list column (shape-aware gather)
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B3: loc with list column ===" << std::flush;
+    {
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index("f", std::vector<double>{1.0, 2.0, 3.0});
+        df->add_list_column<double>("S",
+            std::vector<std::vector<double>>{{10.0, 20.0}, {30.0, 40.0}, {50.0, 60.0}});
+
+        auto sub = df->loc({1}); // fix f = 2.0 (1 = index 1 of 0-based: {0,1,2})
+        // Actually loc(1) -> 2nd level value of "f" index = 2.0
+        assert(sub->num_rows() == 1);
+        assert(sub->column_shape("S") == (std::vector<std::size_t>{2}));
+
+        auto s1 = sub->get_list_element("S", 1);
+        assert(approx_equal(s1->at<double>("S", 0), 30.0));
+        auto s2 = sub->get_list_element("S", 2);
+        assert(approx_equal(s2->at<double>("S", 0), 40.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B4: slice with list column
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B4: slice with list column ===" << std::flush;
+    {
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index("f", std::vector<double>{1.0, 2.0, 3.0, 4.0});
+        df->add_list_column<double>("S",
+            std::vector<std::vector<double>>{{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}, {7.0, 8.0}});
+
+        auto sl = df->slice(1, 3); // rows 1..2 (0-based, exclusive end)
+        assert(sl->num_rows() == 2);
+        assert(sl->column_shape("S") == (std::vector<std::size_t>{2}));
+
+        auto s1 = sl->get_list_element("S", 1);
+        assert(approx_equal(s1->at<double>("S", 0), 3.0)); // row 1, elem 0
+        assert(approx_equal(s1->at<double>("S", 1), 5.0)); // row 2, elem 0
+        std::cout << "\n" << df->to_string() << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B5: column_kind, is_independent, is_dependent, is_scalar, is_list, is_matrix
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B5: ColumnKind predicates ===" << std::flush;
+    {
+        using CK = exprdf::DataFrame::ColumnKind;
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index<double>("f", {1.0, 2.0});
+        df->add_column<double>("v", {10.0, 20.0});
+        df->add_list_column<double>("S", {{1.0, 2.0}, {3.0, 4.0}});
+        df->add_matrix_column<double>("M",
+            {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}});
+
+        // column_kind
+        assert(df->column_kind("f") == CK::Independent);
+        assert(df->column_kind("v") == CK::Scalar);
+        assert(df->column_kind("S") == CK::List);
+        assert(df->column_kind("M") == CK::Matrix);
+
+        // is_independent / is_dependent
+        assert(df->is_independent("f"));
+        assert(!df->is_independent("v"));
+        assert(!df->is_dependent("f"));
+        assert(df->is_dependent("v"));
+        assert(df->is_dependent("S"));
+        assert(df->is_dependent("M"));
+
+        // is_scalar
+        assert(df->is_scalar("f"));  // index cols have no shape
+        assert(df->is_scalar("v"));
+        assert(!df->is_scalar("S"));
+        assert(!df->is_scalar("M"));
+
+        // is_list / is_matrix
+        assert(!df->is_list("v"));
+        assert(df->is_list("S"));
+        assert(!df->is_list("M"));
+        assert(!df->is_matrix("v"));
+        assert(!df->is_matrix("S"));
+        assert(df->is_matrix("M"));
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== ALL TESTS PASSED ===" << std::endl;
     return 0;
 }

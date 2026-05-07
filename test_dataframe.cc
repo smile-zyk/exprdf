@@ -2033,6 +2033,84 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // ----------------------------------------------------------------
+    // Test B6: extended at / set + row / column accessors for list/matrix
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test B6: at/set/get_list_row/get_matrix_row/set_list_row/set_matrix_row/get_list_column/get_matrix_column ===" << std::flush;
+    {
+        auto df = std::make_shared<exprdf::DataFrame>();
+        df->add_uniform_index<double>("f", {1.0, 2.0, 3.0});
+        // list column: S[i] = {10*i+1, 10*i+2} (1-based row i)
+        df->add_list_column<double>("S", {{1.0, 2.0}, {11.0, 12.0}, {21.0, 22.0}});
+        // matrix column: M[i] = [[100*i+1, 100*i+2],[100*i+3, 100*i+4]]
+        df->add_matrix_column<double>("M",
+            {{{1.0, 2.0}, {3.0, 4.0}},
+             {{101.0, 102.0}, {103.0, 104.0}},
+             {{201.0, 202.0}, {203.0, 204.0}}});
+
+        // --- at scalar throws for list column ---
+        bool threw = false;
+        try { df->at<double>("S", 0); } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+
+        // --- at(col, row, k): 1-based list element ---
+        assert(approx_equal(df->at<double>("S", 0, 1), 1.0));
+        assert(approx_equal(df->at<double>("S", 0, 2), 2.0));
+        assert(approx_equal(df->at<double>("S", 1, 1), 11.0));
+        assert(approx_equal(df->at<double>("S", 2, 2), 22.0));
+
+        // --- at(col, row, i, j): 1-based matrix element ---
+        assert(approx_equal(df->at<double>("M", 0, 1, 1), 1.0));
+        assert(approx_equal(df->at<double>("M", 0, 1, 2), 2.0));
+        assert(approx_equal(df->at<double>("M", 0, 2, 1), 3.0));
+        assert(approx_equal(df->at<double>("M", 1, 2, 2), 104.0));
+        assert(approx_equal(df->at<double>("M", 2, 1, 1), 201.0));
+
+        // --- set(col, row, k): write list element ---
+        df->set<double>("S", 1, 2, 99.0);
+        assert(approx_equal(df->at<double>("S", 1, 2), 99.0));
+        df->set<double>("S", 1, 2, 12.0); // restore
+
+        // --- set(col, row, i, j): write matrix element ---
+        df->set<double>("M", 2, 2, 2, 777.0);
+        assert(approx_equal(df->at<double>("M", 2, 2, 2), 777.0));
+        df->set<double>("M", 2, 2, 2, 204.0); // restore
+
+        // --- get_list_row ---
+        auto row0 = df->get_list_row<double>("S", 0);
+        assert(row0.size() == 2 && approx_equal(row0[0], 1.0) && approx_equal(row0[1], 2.0));
+        auto row2 = df->get_list_row<double>("S", 2);
+        assert(approx_equal(row2[0], 21.0) && approx_equal(row2[1], 22.0));
+
+        // --- get_matrix_row ---
+        auto mat1 = df->get_matrix_row<double>("M", 1);
+        assert(mat1.size() == 2 && mat1[0].size() == 2);
+        assert(approx_equal(mat1[0][0], 101.0) && approx_equal(mat1[1][1], 104.0));
+
+        // --- set_list_row ---
+        df->set_list_row<double>("S", 0, {5.0, 6.0});
+        assert(approx_equal(df->at<double>("S", 0, 1), 5.0));
+        assert(approx_equal(df->at<double>("S", 0, 2), 6.0));
+        df->set_list_row<double>("S", 0, {1.0, 2.0}); // restore
+
+        // --- set_matrix_row ---
+        df->set_matrix_row<double>("M", 0, {{9.0, 8.0}, {7.0, 6.0}});
+        assert(approx_equal(df->at<double>("M", 0, 1, 1), 9.0));
+        assert(approx_equal(df->at<double>("M", 0, 2, 2), 6.0));
+        df->set_matrix_row<double>("M", 0, {{1.0, 2.0}, {3.0, 4.0}}); // restore
+
+        // --- get_list_column ---
+        auto lc = df->get_list_column<double>("S");
+        assert(lc.size() == 3);
+        assert(approx_equal(lc[0][0], 1.0) && approx_equal(lc[2][1], 22.0));
+
+        // --- get_matrix_column ---
+        auto mc = df->get_matrix_column<double>("M");
+        assert(mc.size() == 3 && mc[0].size() == 2 && mc[0][0].size() == 2);
+        assert(approx_equal(mc[0][0][0], 1.0) && approx_equal(mc[2][1][1], 204.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
     std::cout << "\n=== ALL TESTS PASSED ===" << std::endl;
     return 0;
 }

@@ -1326,4 +1326,81 @@ assert df_b6.is_index("f")
 assert not df_b6.is_index("v")
 print("PASSED")
 
+# ----------------------------------------------------------------
+# Test B7: extended at/set + row/column accessors for list/matrix
+# ----------------------------------------------------------------
+print("\n=== Test B7: at/set overloads, get/set_list_row, get/set_matrix_row, get_list_column, get_matrix_column ===", end=" ", flush=True)
+df_b7 = pdf.DataFrame()
+df_b7.add_uniform_index("f", [1.0, 2.0, 3.0])
+df_b7.add_list_column("S", [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]])
+df_b7.add_matrix_column("M", [[[1.0, 2.0], [3.0, 4.0]],
+                               [[101.0, 102.0], [103.0, 104.0]],
+                               [[201.0, 202.0], [203.0, 204.0]]])
+
+# at(col, row) on list column must raise
+try:
+    df_b7.at("S", 0)
+    assert False, "Expected error"
+except Exception:
+    pass
+
+# at(col, row, k) — 1-based list element
+assert df_b7.at("S", 0, 1) == 1.0
+assert df_b7.at("S", 0, 2) == 2.0
+assert df_b7.at("S", 1, 1) == 11.0
+assert df_b7.at("S", 2, 2) == 22.0
+
+# at(col, row, i, j) — 1-based matrix element
+assert df_b7.at("M", 0, 1, 1) == 1.0
+assert df_b7.at("M", 0, 1, 2) == 2.0
+assert df_b7.at("M", 0, 2, 1) == 3.0
+assert df_b7.at("M", 1, 2, 2) == 104.0
+assert df_b7.at("M", 2, 1, 1) == 201.0
+
+# set(col, row, k) — 1-based write list element
+df_b7.set("S", 1, 2, 99.0)
+assert df_b7.at("S", 1, 2) == 99.0
+df_b7.set("S", 1, 2, 12.0)  # restore
+
+# set(col, row, i, j) — 1-based write matrix element
+df_b7.set("M", 2, 2, 2, 777.0)
+assert df_b7.at("M", 2, 2, 2) == 777.0
+df_b7.set("M", 2, 2, 2, 204.0)  # restore
+
+# get_list_row
+row0 = df_b7.get_list_row("S", 0)
+assert row0 == [1.0, 2.0]
+row2 = df_b7.get_list_row("S", 2)
+assert row2 == [21.0, 22.0]
+
+# get_matrix_row
+mat1 = df_b7.get_matrix_row("M", 1)
+assert mat1 == [[101.0, 102.0], [103.0, 104.0]]
+
+# set_list_row
+df_b7.set_list_row("S", 0, [5.0, 6.0])
+assert df_b7.at("S", 0, 1) == 5.0
+assert df_b7.at("S", 0, 2) == 6.0
+df_b7.set_list_row("S", 0, [1.0, 2.0])  # restore
+
+# set_matrix_row
+df_b7.set_matrix_row("M", 0, [[9.0, 8.0], [7.0, 6.0]])
+assert df_b7.at("M", 0, 1, 1) == 9.0
+assert df_b7.at("M", 0, 2, 2) == 6.0
+df_b7.set_matrix_row("M", 0, [[1.0, 2.0], [3.0, 4.0]])  # restore
+
+# get_list_column — returns list[list[T]]
+lc = df_b7.get_list_column("S")
+assert lc == [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]]
+
+# get_matrix_column — returns list[list[list[T]]]
+mc = df_b7.get_matrix_column("M")
+assert mc[0] == [[1.0, 2.0], [3.0, 4.0]]
+assert mc[2][1][1] == 204.0
+
+# get_column on list/matrix returns structured data
+assert df_b7.get_column("S") == [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]]
+assert df_b7["S"] == [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]]
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

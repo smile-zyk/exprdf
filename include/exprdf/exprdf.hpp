@@ -696,14 +696,94 @@ public:
     std::size_t num_columns() const {
         return columns_.size();
     }
+    // at<T>(col, row): read scalar element at conceptual row (0-based).
+    // Throws for list/matrix columns — use at(col, row, k) or at(col, row, i, j).
     template <typename T>
     T at(const std::string& col, std::size_t row) const {
+        const Column& c = get_col(col);
+        if (c.elem_per_row() != 1)
+            throw std::invalid_argument(
+                "Column '" + col + "' is a list/matrix column; "
+                "use at(col, row, k) for list or at(col, row, i, j) for matrix");
         return get_column_as<T>(col).at(row);
     }
 
+    // at<T>(col, row, k): read the k-th element (1-based) from a 1-D list column.
+    template <typename T>
+    T at(const std::string& col, std::size_t row, std::size_t k) const {
+        const Column& c = get_col(col);
+        if (c.shape.size() != 1)
+            throw std::invalid_argument("Column '" + col + "' is not a 1-D list column");
+        std::size_t n = c.shape[0];
+        if (k < 1 || k > n)
+            throw std::out_of_range("List index " + std::to_string(k) +
+                                    " out of range (1.." + std::to_string(n) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        return get_column_as<T>(col)[row * n + (k - 1)];
+    }
+
+    // at<T>(col, row, i, j): read the (i,j)-th element (1-based) from a 2-D matrix column.
+    template <typename T>
+    T at(const std::string& col, std::size_t row, std::size_t i, std::size_t j) const {
+        const Column& c = get_col(col);
+        if (c.shape.size() != 2)
+            throw std::invalid_argument("Column '" + col + "' is not a 2-D matrix column");
+        std::size_t mrows = c.shape[0], mcols = c.shape[1];
+        if (i < 1 || i > mrows)
+            throw std::out_of_range("Row index " + std::to_string(i) +
+                                    " out of range (1.." + std::to_string(mrows) + ")");
+        if (j < 1 || j > mcols)
+            throw std::out_of_range("Col index " + std::to_string(j) +
+                                    " out of range (1.." + std::to_string(mcols) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        return get_column_as<T>(col)[row * mrows * mcols + (i - 1) * mcols + (j - 1)];
+    }
+
+    // set<T>(col, row, value): write scalar element at conceptual row (0-based).
+    // Throws for list/matrix columns — use set(col, row, k, v) or set(col, row, i, j, v).
     template <typename T>
     void set(const std::string& col, std::size_t row, const T& value) {
+        const Column& c = get_col(col);
+        if (c.elem_per_row() != 1)
+            throw std::invalid_argument(
+                "Column '" + col + "' is a list/matrix column; "
+                "use set(col, row, k, v) for list or set(col, row, i, j, v) for matrix");
         get_column_as<T>(col).at(row) = value;
+    }
+
+    // set<T>(col, row, k, value): write the k-th element (1-based) in a 1-D list column.
+    template <typename T>
+    void set(const std::string& col, std::size_t row, std::size_t k, const T& value) {
+        Column& c = get_col(col);
+        if (c.shape.size() != 1)
+            throw std::invalid_argument("Column '" + col + "' is not a 1-D list column");
+        std::size_t n = c.shape[0];
+        if (k < 1 || k > n)
+            throw std::out_of_range("List index " + std::to_string(k) +
+                                    " out of range (1.." + std::to_string(n) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        get_column_as<T>(col)[row * n + (k - 1)] = value;
+    }
+
+    // set<T>(col, row, i, j, value): write the (i,j)-th element (1-based) in a 2-D matrix column.
+    template <typename T>
+    void set(const std::string& col, std::size_t row, std::size_t i, std::size_t j, const T& value) {
+        Column& c = get_col(col);
+        if (c.shape.size() != 2)
+            throw std::invalid_argument("Column '" + col + "' is not a 2-D matrix column");
+        std::size_t mrows = c.shape[0], mcols = c.shape[1];
+        if (i < 1 || i > mrows)
+            throw std::out_of_range("Row index " + std::to_string(i) +
+                                    " out of range (1.." + std::to_string(mrows) + ")");
+        if (j < 1 || j > mcols)
+            throw std::out_of_range("Col index " + std::to_string(j) +
+                                    " out of range (1.." + std::to_string(mcols) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        get_column_as<T>(col)[row * mrows * mcols + (i - 1) * mcols + (j - 1)] = value;
     }
 
     // --- Row slicing ---
@@ -1784,6 +1864,112 @@ public:
     // Query the shape of a column: empty for scalar, {n} for 1-D list, {m,n} for matrix.
     std::vector<std::size_t> column_shape(const std::string& name) const {
         return get_col(name).shape;
+    }
+
+    // get_list_row<T>: return the full list for a single conceptual row (0-based).
+    template <typename T>
+    std::vector<T> get_list_row(const std::string& name, std::size_t row) const {
+        const Column& col = get_col(name);
+        if (col.shape.size() != 1)
+            throw std::invalid_argument("Column '" + name + "' is not a 1-D list column");
+        std::size_t n = col.shape[0];
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        const auto& flat = get_column_as<T>(name);
+        return std::vector<T>(flat.begin() + row * n, flat.begin() + (row + 1) * n);
+    }
+
+    // get_matrix_row<T>: return the full m×n matrix for a single conceptual row (0-based).
+    template <typename T>
+    std::vector<std::vector<T>> get_matrix_row(const std::string& name, std::size_t row) const {
+        const Column& col = get_col(name);
+        if (col.shape.size() != 2)
+            throw std::invalid_argument("Column '" + name + "' is not a 2-D matrix column");
+        std::size_t mrows = col.shape[0], mcols = col.shape[1];
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        const auto& flat = get_column_as<T>(name);
+        std::size_t base = row * mrows * mcols;
+        std::vector<std::vector<T>> result(mrows, std::vector<T>(mcols));
+        for (std::size_t i = 0; i < mrows; ++i)
+            for (std::size_t j = 0; j < mcols; ++j)
+                result[i][j] = flat[base + i * mcols + j];
+        return result;
+    }
+
+    // set_list_row<T>: replace the entire list for a single conceptual row (0-based).
+    template <typename T>
+    void set_list_row(const std::string& name, std::size_t row, const std::vector<T>& data) {
+        Column& col = get_col(name);
+        if (col.shape.size() != 1)
+            throw std::invalid_argument("Column '" + name + "' is not a 1-D list column");
+        std::size_t n = col.shape[0];
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        if (data.size() != n)
+            throw std::invalid_argument(
+                "Expected " + std::to_string(n) + " elements, got " + std::to_string(data.size()));
+        auto& flat = get_column_as<T>(name);
+        std::copy(data.begin(), data.end(), flat.begin() + row * n);
+    }
+
+    // set_matrix_row<T>: replace the entire matrix for a single conceptual row (0-based).
+    template <typename T>
+    void set_matrix_row(const std::string& name, std::size_t row,
+                        const std::vector<std::vector<T>>& data) {
+        Column& col = get_col(name);
+        if (col.shape.size() != 2)
+            throw std::invalid_argument("Column '" + name + "' is not a 2-D matrix column");
+        std::size_t mrows = col.shape[0], mcols = col.shape[1];
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        if (data.size() != mrows)
+            throw std::invalid_argument(
+                "Expected " + std::to_string(mrows) + " matrix rows, got " + std::to_string(data.size()));
+        auto& flat = get_column_as<T>(name);
+        std::size_t base = row * mrows * mcols;
+        for (std::size_t i = 0; i < mrows; ++i) {
+            if (data[i].size() != mcols)
+                throw std::invalid_argument(
+                    "Matrix row " + std::to_string(i) + ": expected " + std::to_string(mcols) +
+                    " cols, got " + std::to_string(data[i].size()));
+            for (std::size_t j = 0; j < mcols; ++j)
+                flat[base + i * mcols + j] = data[i][j];
+        }
+    }
+
+    // get_list_column<T>: return all conceptual rows as vector<vector<T>>.
+    template <typename T>
+    std::vector<std::vector<T>> get_list_column(const std::string& name) const {
+        const Column& col = get_col(name);
+        if (col.shape.size() != 1)
+            throw std::invalid_argument("Column '" + name + "' is not a 1-D list column");
+        std::size_t n = col.shape[0];
+        std::size_t nrows = num_rows();
+        const auto& flat = get_column_as<T>(name);
+        std::vector<std::vector<T>> result(nrows, std::vector<T>(n));
+        for (std::size_t r = 0; r < nrows; ++r)
+            for (std::size_t i = 0; i < n; ++i)
+                result[r][i] = flat[r * n + i];
+        return result;
+    }
+
+    // get_matrix_column<T>: return all conceptual rows as vector<vector<vector<T>>>.
+    template <typename T>
+    std::vector<std::vector<std::vector<T>>> get_matrix_column(const std::string& name) const {
+        const Column& col = get_col(name);
+        if (col.shape.size() != 2)
+            throw std::invalid_argument("Column '" + name + "' is not a 2-D matrix column");
+        std::size_t mrows = col.shape[0], mcols = col.shape[1];
+        std::size_t nrows = num_rows();
+        const auto& flat = get_column_as<T>(name);
+        std::vector<std::vector<std::vector<T>>> result(
+            nrows, std::vector<std::vector<T>>(mrows, std::vector<T>(mcols)));
+        for (std::size_t r = 0; r < nrows; ++r)
+            for (std::size_t i = 0; i < mrows; ++i)
+                for (std::size_t j = 0; j < mcols; ++j)
+                    result[r][i][j] = flat[r * mrows * mcols + i * mcols + j];
+        return result;
     }
 
     // get_list_element: extract the idx-th element (1-based) from a list column.

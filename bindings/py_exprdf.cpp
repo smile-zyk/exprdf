@@ -16,6 +16,33 @@ struct ColumnGroupProxy {
     std::string col_name;
 };
 
+// ----------------------------------------------------------------
+// Helper: get column data as a Python object, returning structured
+// list[list[T]] for list columns and list[list[list[T]]] for matrix columns.
+// ----------------------------------------------------------------
+namespace {
+py::object py_get_column(const exprdf::DataFrame& self, const std::string& name) {
+    auto shape = self.column_shape(name);
+    std::string dt = self.column_dtype(name);
+    if (shape.size() == 1) {
+        if (dt == "int")     return py::cast(self.get_list_column<int>(name));
+        if (dt == "double")  return py::cast(self.get_list_column<double>(name));
+        if (dt == "string")  return py::cast(self.get_list_column<std::string>(name));
+        if (dt == "complex") return py::cast(self.get_list_column<std::complex<double>>(name));
+    } else if (shape.size() == 2) {
+        if (dt == "int")     return py::cast(self.get_matrix_column<int>(name));
+        if (dt == "double")  return py::cast(self.get_matrix_column<double>(name));
+        if (dt == "string")  return py::cast(self.get_matrix_column<std::string>(name));
+        if (dt == "complex") return py::cast(self.get_matrix_column<std::complex<double>>(name));
+    }
+    if (dt == "int")     return py::cast(self.get_column_as<int>(name));
+    if (dt == "double")  return py::cast(self.get_column_as<double>(name));
+    if (dt == "string")  return py::cast(self.get_column_as<std::string>(name));
+    if (dt == "complex") return py::cast(self.get_column_as<std::complex<double>>(name));
+    throw std::runtime_error("Unknown dtype: " + dt);
+}
+} // namespace
+
 PYBIND11_MODULE(exprdf, m) {
     m.doc() = "exprdf: header-only C++ DataFrame library with multi-index support.\n"
               "Column types: int, double, str, complex.\n"
@@ -226,64 +253,89 @@ PYBIND11_MODULE(exprdf, m) {
         // Element access
         // ----------------------------------------------------------------
 
-        // get_column: dispatch by stored dtype (by name)
+        // get_column: structured dispatch — list cols -> list[list[T]], matrix cols -> list[list[list[T]]]
         .def("get_column", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
-            std::string dt = self.column_dtype(name);
-            if (dt == "int")
-                return py::cast(self.get_column_as<int>(name));
-            else if (dt == "double")
-                return py::cast(self.get_column_as<double>(name));
-            else if (dt == "string")
-                return py::cast(self.get_column_as<std::string>(name));
-            else if (dt == "complex")
-                return py::cast(self.get_column_as<std::complex<double>>(name));
-            throw std::runtime_error("Unknown dtype: " + dt);
-        }, py::arg("name"), "Get column data as a Python list (by name)")
+            return py_get_column(self, name);
+        }, py::arg("name"), "Get column data. List columns return list[list[T]], matrix columns return list[list[list[T]]], scalar columns return list[T].")
 
         // get_column by index
         .def("get_column", [](const exprdf::DataFrame& self, std::size_t index) -> py::object {
-            const exprdf::Column& col = self.get_column(index);
-            switch (col.tag) {
-                case exprdf::DType::Int:           return py::cast(col.as<int>());
-                case exprdf::DType::Double:        return py::cast(col.as<double>());
-                case exprdf::DType::String:        return py::cast(col.as<std::string>());
-                case exprdf::DType::Complex:  return py::cast(col.as<std::complex<double>>());
-            }
-            throw std::runtime_error("Unknown dtype");
-        }, py::arg("index"), "Get column data as a Python list (by index)")
+            return py_get_column(self, self.column_name(index));
+        }, py::arg("index"), "Get column data by index (structured for list/matrix columns)")
 
         // column_name by index
         .def("column_name", &exprdf::DataFrame::column_name, py::arg("index"),
              "Get column name by index")
 
-        // at: dispatch by stored dtype
+        // at(col, row): scalar element access
         .def("at", [](const exprdf::DataFrame& self, const std::string& col, std::size_t row) -> py::object {
             std::string dt = self.column_dtype(col);
-            if (dt == "int")
-                return py::cast(self.at<int>(col, row));
-            else if (dt == "double")
-                return py::cast(self.at<double>(col, row));
-            else if (dt == "string")
-                return py::cast(self.at<std::string>(col, row));
-            else if (dt == "complex")
-                return py::cast(self.at<std::complex<double>>(col, row));
+            if (dt == "int")     return py::cast(self.at<int>(col, row));
+            if (dt == "double")  return py::cast(self.at<double>(col, row));
+            if (dt == "string")  return py::cast(self.at<std::string>(col, row));
+            if (dt == "complex") return py::cast(self.at<std::complex<double>>(col, row));
             throw std::runtime_error("Unknown dtype: " + dt);
-        }, py::arg("col"), py::arg("row"), "Get element at (col, row)")
+        }, py::arg("col"), py::arg("row"), "Get scalar element at (col, row). Throws for list/matrix columns.")
 
-        // set: dispatch by stored dtype
-        .def("set", [](exprdf::DataFrame& self, const std::string& col, std::size_t row, py::object value) {
+        // at(col, row, k): 1-based element from a list column
+        .def("at", [](const exprdf::DataFrame& self, const std::string& col,
+                      std::size_t row, std::size_t k) -> py::object {
             std::string dt = self.column_dtype(col);
-            if (dt == "int")
-                self.set<int>(col, row, value.cast<int>());
-            else if (dt == "double")
-                self.set<double>(col, row, value.cast<double>());
-            else if (dt == "string")
-                self.set<std::string>(col, row, value.cast<std::string>());
-            else if (dt == "complex")
-                self.set<std::complex<double>>(col, row, value.cast<std::complex<double>>());
-            else
-                throw std::runtime_error("Unknown dtype: " + dt);
-        }, py::arg("col"), py::arg("row"), py::arg("value"), "Set element at (col, row)")
+            if (dt == "int")     return py::cast(self.at<int>(col, row, k));
+            if (dt == "double")  return py::cast(self.at<double>(col, row, k));
+            if (dt == "string")  return py::cast(self.at<std::string>(col, row, k));
+            if (dt == "complex") return py::cast(self.at<std::complex<double>>(col, row, k));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("col"), py::arg("row"), py::arg("k"),
+           "Get the k-th element (1-based) from a 1-D list column at conceptual row.")
+
+        // at(col, row, i, j): 1-based element from a matrix column
+        .def("at", [](const exprdf::DataFrame& self, const std::string& col,
+                      std::size_t row, std::size_t i, std::size_t j) -> py::object {
+            std::string dt = self.column_dtype(col);
+            if (dt == "int")     return py::cast(self.at<int>(col, row, i, j));
+            if (dt == "double")  return py::cast(self.at<double>(col, row, i, j));
+            if (dt == "string")  return py::cast(self.at<std::string>(col, row, i, j));
+            if (dt == "complex") return py::cast(self.at<std::complex<double>>(col, row, i, j));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("col"), py::arg("row"), py::arg("i"), py::arg("j"),
+           "Get the (i,j)-th element (1-based) from a 2-D matrix column at conceptual row.")
+
+        // set(col, row, value): scalar write
+        .def("set", [](exprdf::DataFrame& self, const std::string& col,
+                       std::size_t row, py::object value) {
+            std::string dt = self.column_dtype(col);
+            if (dt == "int")     self.set<int>(col, row, value.cast<int>());
+            else if (dt == "double")  self.set<double>(col, row, value.cast<double>());
+            else if (dt == "string")  self.set<std::string>(col, row, value.cast<std::string>());
+            else if (dt == "complex") self.set<std::complex<double>>(col, row, value.cast<std::complex<double>>());
+            else throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("col"), py::arg("row"), py::arg("value"),
+           "Set scalar element at (col, row). Throws for list/matrix columns.")
+
+        // set(col, row, k, value): 1-based write into a list column
+        .def("set", [](exprdf::DataFrame& self, const std::string& col,
+                       std::size_t row, std::size_t k, py::object value) {
+            std::string dt = self.column_dtype(col);
+            if (dt == "int")     self.set<int>(col, row, k, value.cast<int>());
+            else if (dt == "double")  self.set<double>(col, row, k, value.cast<double>());
+            else if (dt == "string")  self.set<std::string>(col, row, k, value.cast<std::string>());
+            else if (dt == "complex") self.set<std::complex<double>>(col, row, k, value.cast<std::complex<double>>());
+            else throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("col"), py::arg("row"), py::arg("k"), py::arg("value"),
+           "Set the k-th element (1-based) in a 1-D list column at conceptual row.")
+
+        // set(col, row, i, j, value): 1-based write into a matrix column
+        .def("set", [](exprdf::DataFrame& self, const std::string& col,
+                       std::size_t row, std::size_t i, std::size_t j, py::object value) {
+            std::string dt = self.column_dtype(col);
+            if (dt == "int")     self.set<int>(col, row, i, j, value.cast<int>());
+            else if (dt == "double")  self.set<double>(col, row, i, j, value.cast<double>());
+            else if (dt == "string")  self.set<std::string>(col, row, i, j, value.cast<std::string>());
+            else if (dt == "complex") self.set<std::complex<double>>(col, row, i, j, value.cast<std::complex<double>>());
+            else throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("col"), py::arg("row"), py::arg("i"), py::arg("j"), py::arg("value"),
+           "Set the (i,j)-th element (1-based) in a 2-D matrix column at conceptual row.")
 
         // ----------------------------------------------------------------
         // General DataFrame methods
@@ -338,6 +390,120 @@ PYBIND11_MODULE(exprdf, m) {
              "Write CSV to file")
 
         // ----------------------------------------------------------------
+        // List / matrix row and column access
+        // ----------------------------------------------------------------
+
+        // get_list_row(name, row): return the full list for a conceptual row (0-based)
+        .def("get_list_row", [](const exprdf::DataFrame& self,
+                                const std::string& name, std::size_t row) -> py::object {
+            std::string dt = self.column_dtype(name);
+            if (dt == "int")     return py::cast(self.get_list_row<int>(name, row));
+            if (dt == "double")  return py::cast(self.get_list_row<double>(name, row));
+            if (dt == "string")  return py::cast(self.get_list_row<std::string>(name, row));
+            if (dt == "complex") return py::cast(self.get_list_row<std::complex<double>>(name, row));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"), py::arg("row"),
+           "Return the full list for a single conceptual row (0-based) of a list column.")
+
+        // get_matrix_row(name, row): return the full matrix for a conceptual row (0-based)
+        .def("get_matrix_row", [](const exprdf::DataFrame& self,
+                                  const std::string& name, std::size_t row) -> py::object {
+            std::string dt = self.column_dtype(name);
+            if (dt == "int")     return py::cast(self.get_matrix_row<int>(name, row));
+            if (dt == "double")  return py::cast(self.get_matrix_row<double>(name, row));
+            if (dt == "string")  return py::cast(self.get_matrix_row<std::string>(name, row));
+            if (dt == "complex") return py::cast(self.get_matrix_row<std::complex<double>>(name, row));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"), py::arg("row"),
+           "Return the full m×n matrix for a single conceptual row (0-based) of a matrix column.")
+
+        // set_list_row(name, row, data): replace the entire list for a conceptual row
+        .def("set_list_row", [](exprdf::DataFrame& self, const std::string& name,
+                                std::size_t row, py::list data) {
+            std::string dt = self.column_dtype(name);
+            if (dt == "int") {
+                std::vector<int> v; for (auto x : data) v.push_back(x.cast<int>());
+                self.set_list_row<int>(name, row, v);
+            } else if (dt == "double") {
+                std::vector<double> v; for (auto x : data) v.push_back(x.cast<double>());
+                self.set_list_row<double>(name, row, v);
+            } else if (dt == "string") {
+                std::vector<std::string> v; for (auto x : data) v.push_back(x.cast<std::string>());
+                self.set_list_row<std::string>(name, row, v);
+            } else if (dt == "complex") {
+                std::vector<std::complex<double>> v; for (auto x : data) v.push_back(x.cast<std::complex<double>>());
+                self.set_list_row<std::complex<double>>(name, row, v);
+            } else throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"), py::arg("row"), py::arg("data"),
+           "Replace the entire list for a single conceptual row (0-based) of a list column.")
+
+        // set_matrix_row(name, row, data): replace the entire matrix for a conceptual row
+        .def("set_matrix_row", [](exprdf::DataFrame& self, const std::string& name,
+                                  std::size_t row, py::list data) {
+            std::string dt = self.column_dtype(name);
+            auto to_row = [](py::handle h) {
+                py::list inner = h.cast<py::list>();
+                return inner;
+            };
+            if (dt == "double") {
+                std::vector<std::vector<double>> mat;
+                for (auto r : data) {
+                    std::vector<double> rv;
+                    for (auto x : r.cast<py::list>()) rv.push_back(x.cast<double>());
+                    mat.push_back(rv);
+                }
+                self.set_matrix_row<double>(name, row, mat);
+            } else if (dt == "int") {
+                std::vector<std::vector<int>> mat;
+                for (auto r : data) {
+                    std::vector<int> rv;
+                    for (auto x : r.cast<py::list>()) rv.push_back(x.cast<int>());
+                    mat.push_back(rv);
+                }
+                self.set_matrix_row<int>(name, row, mat);
+            } else if (dt == "complex") {
+                std::vector<std::vector<std::complex<double>>> mat;
+                for (auto r : data) {
+                    std::vector<std::complex<double>> rv;
+                    for (auto x : r.cast<py::list>()) rv.push_back(x.cast<std::complex<double>>());
+                    mat.push_back(rv);
+                }
+                self.set_matrix_row<std::complex<double>>(name, row, mat);
+            } else if (dt == "string") {
+                std::vector<std::vector<std::string>> mat;
+                for (auto r : data) {
+                    std::vector<std::string> rv;
+                    for (auto x : r.cast<py::list>()) rv.push_back(x.cast<std::string>());
+                    mat.push_back(rv);
+                }
+                self.set_matrix_row<std::string>(name, row, mat);
+            } else throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"), py::arg("row"), py::arg("data"),
+           "Replace the entire m×n matrix for a single conceptual row (0-based) of a matrix column.")
+
+        // get_list_column(name): return all rows as list[list[T]]
+        .def("get_list_column", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
+            std::string dt = self.column_dtype(name);
+            if (dt == "int")     return py::cast(self.get_list_column<int>(name));
+            if (dt == "double")  return py::cast(self.get_list_column<double>(name));
+            if (dt == "string")  return py::cast(self.get_list_column<std::string>(name));
+            if (dt == "complex") return py::cast(self.get_list_column<std::complex<double>>(name));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"),
+           "Return all rows of a list column as list[list[T]].")
+
+        // get_matrix_column(name): return all rows as list[list[list[T]]]
+        .def("get_matrix_column", [](const exprdf::DataFrame& self, const std::string& name) -> py::object {
+            std::string dt = self.column_dtype(name);
+            if (dt == "int")     return py::cast(self.get_matrix_column<int>(name));
+            if (dt == "double")  return py::cast(self.get_matrix_column<double>(name));
+            if (dt == "string")  return py::cast(self.get_matrix_column<std::string>(name));
+            if (dt == "complex") return py::cast(self.get_matrix_column<std::complex<double>>(name));
+            throw std::runtime_error("Unknown dtype: " + dt);
+        }, py::arg("name"),
+           "Return all rows of a matrix column as list[list[list[T]]].")
+
+        // ----------------------------------------------------------------
         // Python operator overloads
         // ----------------------------------------------------------------
         .def("__repr__", [](const exprdf::DataFrame& self) {
@@ -348,26 +514,22 @@ PYBIND11_MODULE(exprdf, m) {
                 std::string name = key.cast<std::string>();
                 if (!self.has_column(name))
                     throw py::key_error("Column '" + name + "' not found");
-                std::string dt = self.column_dtype(name);
-                if (dt == "int")
-                    return py::cast(self.get_column_as<int>(name));
-                else if (dt == "double")
-                    return py::cast(self.get_column_as<double>(name));
-                else if (dt == "string")
-                    return py::cast(self.get_column_as<std::string>(name));
-                else if (dt == "complex")
-                    return py::cast(self.get_column_as<std::complex<double>>(name));
-                throw std::runtime_error("Unknown dtype: " + dt);
+                return py_get_column(self, name);
             } else if (py::isinstance<py::int_>(key)) {
-                // Integer row index: return value at that row from the last column.
+                // Integer row index: return value at that row from the last scalar column.
                 std::size_t row = key.cast<std::size_t>();
                 if (self.num_columns() == 0)
                     throw py::index_error("DataFrame has no columns");
                 std::string last = self.column_name(self.num_columns() - 1);
+                auto shape = self.column_shape(last);
+                if (!shape.empty())
+                    throw py::type_error(
+                        "Column '" + last + "' is a list/matrix column; "
+                        "use df." + last + "(k) or df." + last + "(i, j) for element access");
                 std::string dt = self.column_dtype(last);
-                if (dt == "int")    return py::cast(self.at<int>(last, row));
-                if (dt == "double") return py::cast(self.at<double>(last, row));
-                if (dt == "string") return py::cast(self.at<std::string>(last, row));
+                if (dt == "int")     return py::cast(self.at<int>(last, row));
+                if (dt == "double")  return py::cast(self.at<double>(last, row));
+                if (dt == "string")  return py::cast(self.at<std::string>(last, row));
                 if (dt == "complex") return py::cast(self.at<std::complex<double>>(last, row));
                 throw std::runtime_error("Unknown dtype: " + dt);
             }

@@ -1699,7 +1699,6 @@ public:
             for (std::size_t i = 0; i < k; ++i)
                 if (indices[i] == -1)
                     result->index_dims_.push_back(index_dims_[n_outer + i]);
-            result->type_ = type_;
             rebuild_index_dims(*result);
             return result;
         }
@@ -1796,7 +1795,6 @@ public:
         for (auto& d : result_inner_dims)
             result->index_dims_.push_back(d);
 
-        result->type_ = type_;
         rebuild_index_dims(*result);
         return result;
     }

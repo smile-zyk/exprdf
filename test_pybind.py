@@ -491,9 +491,9 @@ df34.name = "S21"
 assert df34.path == "/data/test.csv"
 assert df34.type == "sparam"
 assert df34.name == "S21"
-# loc inherits type
+# loc does NOT inherit type (index changes)
 l34 = df34.loc(0)
-assert l34.type == "sparam"
+assert l34.type == ""
 # sub inherits type
 s34 = df34.sub("v")
 assert s34.type == "sparam"
@@ -570,6 +570,27 @@ print("PASSED")
 print("\n=== Python Test 38: to_csv empty ===")
 df_empty = pdf.DataFrame()
 assert df_empty.to_csv() == ""
+print("PASSED")
+
+# === Python Test 38b: complex to_string display ===
+print("\n=== Python Test 38b: complex to_string display ===")
+df_cplx = pdf.DataFrame()
+df_cplx.add_column("z", [complex(3, 0), complex(0, 4), complex(0, -4),
+                          complex(1, 2), complex(1, -2)])
+# Verify via to_csv (uses column_val_to_string internally)
+csv_cplx = df_cplx.to_csv()
+assert "3\n" in csv_cplx       # real-only: no imaginary part
+assert "4 j\n" in csv_cplx     # imag-only positive
+assert "-4 j\n" in csv_cplx    # imag-only negative
+assert "1 + 2 j\n" in csv_cplx  # both parts positive
+assert "1 - 2 j\n" in csv_cplx  # both parts, negative imag
+# Verify via to_string
+s = df_cplx.to_string()
+assert "3" in s
+assert "4 j" in s
+assert "-4 j" in s
+assert "1 + 2 j" in s
+assert "1 - 2 j" in s
 print("PASSED")
 
 # === Python Test 39: add_grouped_index basic ===
@@ -1401,6 +1422,82 @@ assert mc[2][1][1] == 204.0
 # get_column on list/matrix returns structured data
 assert df_b7.get_column("S") == [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]]
 assert df_b7["S"] == [[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]]
+print("PASSED")
+
+print("\n=== Python Test B8: conj / max / min / zin ===")
+# conj
+df_b8 = pdf.DataFrame()
+df_b8.add_column("z", [complex(1,2), complex(3,-4), complex(0,1)])
+r = df_b8.conj()
+v = r.get_column("z")
+assert v[0] == complex(1,-2) and v[1] == complex(3,4) and v[2] == complex(0,-1)
+# identity for real
+df_b8r = pdf.DataFrame()
+df_b8r.add_column("x", [1.0, 2.0, 3.0])
+assert df_b8r.conj().get_column("x") == [1.0, 2.0, 3.0]
+
+# zin: S11=0 → Zin=50
+df_b8z = pdf.DataFrame()
+df_b8z.add_column("S11", [complex(0,0)])
+r = df_b8z.zin(50)
+assert abs(r.get_column("S11")[0] - 50) < 1e-9
+# S11=-1 → Zin=0
+df_b8z2 = pdf.DataFrame()
+df_b8z2.add_column("S11", [complex(-1,0)])
+assert abs(df_b8z2.zin(50).get_column("S11")[0]) < 1e-9
+
+# max/min no-index
+df_b8m = pdf.DataFrame()
+df_b8m.add_column("x", [3.0, 1.0, 4.0, 1.0, 5.0])
+assert df_b8m.max().num_rows() == 1
+assert df_b8m.max().get_column("x")[0] == 5.0
+assert df_b8m.min().get_column("x")[0] == 1.0
+
+# max/min 1-dim (uniform)
+df_b8_1d = pdf.DataFrame()
+df_b8_1d.add_uniform_index("freq", [1, 2, 3, 4])
+df_b8_1d.add_column("val", [3.0, 7.0, 2.0, 8.0])
+assert df_b8_1d.max().get_column("val")[0] == 8.0
+assert df_b8_1d.min().get_column("val")[0] == 2.0
+
+# max/min 2-dim (reduce inner b, keep outer a)
+df_b8_2d = pdf.DataFrame()
+df_b8_2d.add_column("a", [1, 1, 2, 2])
+df_b8_2d.add_column("b", [10, 20, 10, 20])
+df_b8_2d.add_column("val", [3.0, 7.0, 2.0, 8.0])
+df_b8_2d.set_index(["a", "b"])
+rmax2 = df_b8_2d.max()
+assert rmax2.num_rows() == 2
+assert rmax2.get_column("val") == [7.0, 8.0]
+rmin2 = df_b8_2d.min()
+assert rmin2.get_column("val") == [3.0, 2.0]
+
+# max/min 2-dim + dep col (outer=level, inner=number, dep=PAE)
+df_b8_dep = pdf.DataFrame()
+df_b8_dep.add_column("level",  [1, 1, 1, 2, 2, 2])
+df_b8_dep.add_column("number", [10,20,30,10,20,30])
+df_b8_dep.add_column("PAE",   [70.0,80.0,75.0,60.0,90.0,65.0])
+df_b8_dep.set_index(["level","number"])
+rmax_dep = df_b8_dep.max()
+assert rmax_dep.num_rows() == 2
+assert rmax_dep.index_names() == ["level"]
+assert rmax_dep.get_column("PAE") == [80.0, 90.0]
+rmin_dep = df_b8_dep.min()
+assert rmin_dep.get_column("PAE") == [70.0, 60.0]
+
+# max/min ragged grouped inner dim + dep col
+# level(uniform 2) x number(ragged: 3+2) + dep PAE
+# max: level1->80, level2->90;  min: level1->70, level2->60
+df_b8_rag = pdf.DataFrame()
+df_b8_rag.add_uniform_index("level", [1, 2])
+df_b8_rag.add_grouped_index_groups("number", [[10,20,30],[10,20]])
+df_b8_rag.add_column("PAE", [70.0,80.0,75.0,60.0,90.0])
+rmax_rag = df_b8_rag.max()
+assert rmax_rag.num_rows() == 2
+assert rmax_rag.index_names() == ["level"]
+assert rmax_rag.get_column("PAE") == [80.0, 90.0]
+rmin_rag = df_b8_rag.min()
+assert rmin_rag.get_column("PAE") == [70.0, 60.0]
 print("PASSED")
 
 print("\n=== ALL PYTHON TESTS PASSED ===")

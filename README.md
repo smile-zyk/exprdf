@@ -13,11 +13,13 @@ A header-only C++ DataFrame library for multi-dimensional parameter sweeps.
 - **Index kinds**: `Uniform`, `Grouped` (regular or ragged); `is_regular_grouped()` distinguishes the two
 - **Index operations**: `set_index`, `reset_index`, `loc`, `sub`, `flat_index`, `multi_index`, `from_product`
 - **Mixed index inference**: `set_index(...)` auto-infers Uniform and Regular-Grouped dimensions; ragged structures must be built manually
+- **Reduction**: `max()` / `min()` — reduce the last index dimension within each outer group (no prefix needed, like `loc`)
+- **Unary math**: `math_abs`, `math_real`, `math_imag`, `math_phase`, `math_dB`, `math_dBm`, `math_wtodBm`, `math_sqr`, `math_sqrt`, `math_exp`, `math_ln`, `math_log10`, `math_conj`, `math_zin`; free-function equivalents without prefix (`abs`, `dB`, etc.)
 - **CSV export**: `to_csv()`, `save_csv()`
-- **Pretty printing**: `to_string()` expands list/matrix columns into `name(k)` / `name(i,j)` sub-columns
-- **Unit formatting**: auto-scaled display for frequency, voltage, time, etc.
+- **Pretty printing**: `to_string()` expands list/matrix columns into `name(k)` / `name(i,j)` sub-columns; complex numbers displayed as `a + b j` / `a - b j` / `b j` / `-b j` / `a`
+- **Unit formatting**: `unit_format::Format(qty, value)` — auto-scaled display for frequency, voltage, time, etc.; used throughout `to_string`, `to_csv`, and the Qt viewer; quantity `""` (unitless) produces plain numbers
 - **pybind11 bindings**: full Python API; `df.name` returns a `ColumnGroupProxy` for list/matrix columns, callable as `df.name(k)` or `df.name(i,j)`
-- **Qt5 viewer**: `DataFrameModel` + `DataFrameView` widget with lazy loading; list/matrix columns auto-expanded into separate view columns
+- **Qt5 viewer**: `DataFrameModel` + `DataFrameView` widget with lazy loading; list/matrix columns auto-expanded; all cell values formatted via `unit_format::Format`
 
 ## Requirements
 
@@ -259,129 +261,64 @@ for col in df.column_names():
 | Groups with different run counts or lengths | **throws** — use `add_grouped_index_groups()` |
 
 
-## Requirements
+## max / min
 
-- C++11 compiler (MSVC, GCC, Clang)
-- CMake 3.10+
-- vcpkg (set `VCPKG_ROOT` environment variable)
-- Qt5 (optional, for viewer widget)
-- Python 3 (optional, for pybind11 bindings)
+`max()` and `min()` reduce the **last index dimension** within each outer group, returning a DataFrame with one fewer index dimension. No prefix needed — they work like `loc`.
 
-## Build
-
-```bash
-cmake --preset default
-cmake --build build --config Debug
-```
-
-## Test
-
-```bash
-# C++ tests
-./build/Debug/test_dataframe.exe
-
-# Python tests
-python test_pybind.py
-```
-
-## Quick Start (C++)
+| Scenario | Behaviour |
+|---|---|
+| No index | Returns a single-row DataFrame holding the global max/min |
+| 1 index dim | Reduces to a no-index DataFrame (one value per group) |
+| N index dims | Reduces last dim; result has N−1 index dims |
+| `complex` column | **throws** — no ordering defined |
+| `string` column | **throws** |
+| Non-scalar (list/matrix) column | **throws** |
 
 ```cpp
-#include <exprdf/exprdf.hpp>
-
-using namespace exprdf;
-
-// --- Uniform (Cartesian) index ---
-auto df = std::make_shared<DataFrame>();
-df->add_uniform_index<double>("freq", {1e9, 2e9, 3e9}, "frequency");
-df->add_uniform_index<std::string>("port", {"S11", "S21"});
-df->add_column<std::complex<double>>("value", ...);
-
-auto s = df->loc({0});   // fix last dim at position 0
-df->save_csv("output.csv");
-
-// --- Grouped index (equal-sized groups) ---
-auto df2 = std::make_shared<DataFrame>();
-df2->add_uniform_index<int>("bias", {1, 2});
-df2->add_grouped_index<double>("freq",
-    {1.0, 2.0, 3.0,   // bias=1
-     1.5, 2.5, 3.5},  // bias=2
-    3, "frequency");
-
-// --- Ragged grouped index (must be built manually; set_index will throw for ragged data) ---
-auto df3 = std::make_shared<DataFrame>();
-df3->add_uniform_index<int>("level", {0, 1});
-df3->add_grouped_index_groups<int>("number", {{0, 1, 2}, {0, 1}});  // 3 entries for level 0, 2 for level 1
-df3->add_column<double>("val", {10, 20, 30, 40, 50});
-
-auto sub = df3->loc({1});  // position 1 within each level group → 2 rows
-
-// --- Inspect index dimensions ---
-const auto& dim = df3->get_index_dim("number");
-assert(dim.is_grouped());
-assert(!dim.is_regular_grouped());        // ragged
-assert(dim.group_lengths == std::vector<std::size_t>{3, 2});
-
-// --- set_index infers Uniform + Regular Grouped; ragged data throws ---
-df->set_index({"bias", "freq"});          // OK: regular grouped
-// df->set_index({"level", "number"});    // throws: different group sizes → use add_grouped_index_groups
+// C++
+auto peak   = df->max();   // reduce last index dim, take element-wise max
+auto trough = df->min();
 ```
-
-## Quick Start (Python)
 
 ```python
-import exprdf
-
-# Uniform index
-df = exprdf.DataFrame()
-df.add_uniform_index("freq", [1e9, 2e9, 3e9], "frequency")
-df.add_uniform_index("port", ["S11", "S21"])
-df.add_column("value", [...])
-sub = df.loc([0])
-df.save_csv("output.csv")
-
-# Grouped index (equal-sized groups)
-df2 = exprdf.DataFrame()
-df2.add_uniform_index("bias", [1, 2])
-df2.add_grouped_index("freq", [1.0, 2.0, 3.0, 1.5, 2.5, 3.5], 3, "frequency")
-
-# Ragged grouped index (must be built manually)
-df3 = exprdf.DataFrame()
-df3.add_uniform_index("level", [0, 1])
-df3.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
-df3.add_column("val", [10.0, 20.0, 30.0, 40.0, 50.0])
-sub = df3.loc(1)   # position 1 in each level group
-
-# get_index_dim returns an IndexDim object (not a dict)
-dim = df3.get_index_dim("number")
-print(dim.kind)            # "grouped"
-print(dim.group_lengths)   # [3, 2]
-print(dim.is_regular_grouped())  # False
-
-# set_index infers Uniform + Regular Grouped; ragged data throws
-df.set_index("bias", "freq")   # OK
-# df3_raw.set_index("level", "number")  # raises: ragged structure
+# Python
+peak   = df.max()
+trough = df.min()
 ```
 
-## IndexDim API
+## Unary Math Functions
 
-| Property / Method | Description |
+All operate on the **last column** of the DataFrame and return a copy with that column replaced.
+
+| Method | int | double | complex | Free function |
+|---|---|---|---|---|
+| `math_abs()` / `math_mag()` | int | double | double (|z|) | `abs(df)` |
+| `math_real()` | double | double | double (z.real()) | `real(df)` |
+| `math_imag()` | double | double | double (z.imag()) | `imag(df)` |
+| `math_phase()` | double | double | double (arg(z), rad) | `phase(df)` |
+| `math_dB()` | double | double | double (20·log₁₀|z|) | `dB(df)` |
+| `math_dBm()` | double | double | double (10·log₁₀(|z|·1000)) | `dBm(df)` |
+| `math_wtodBm()` | double | double | **throws** | `wtodBm(df)` |
+| `math_sqr()` | int | double | complex (z²) | `sqr(df)` |
+| `math_sqrt()` | double | double | complex | `sqrt(df)` |
+| `math_exp()` | double | double | complex | `exp(df)` |
+| `math_ln()` | double | double | complex | `ln(df)` |
+| `math_log10()` | double | double | complex | `log10(df)` |
+| `math_conj()` | identity | identity | complex (z̄) | — |
+| `math_zin(z0)` | complex | complex | complex (Zin from S11) | — |
+
+## Complex Number Display Format
+
+Complex values are displayed consistently in `to_string()`, `to_csv()`, and the Qt viewer:
+
+| Case | Format example |
 |---|---|
-| `dim.kind` | `"uniform"` or `"grouped"` |
-| `dim.levels` | Level values (Uniform only; `None` for Grouped) |
-| `dim.level_count` | Number of levels (Uniform) or common group size (Regular Grouped) |
-| `dim.group_lengths` | Per-group inner counts (Grouped only) |
-| `dim.num_groups` | Outer group count |
-| `dim.max_group_length` | Largest group size |
-| `dim.quantity` | Physical quantity string |
-| `dim.is_uniform()` | True for Uniform kind |
-| `dim.is_grouped()` | True for Grouped kind |
-| `dim.is_regular_grouped()` | True when all group sizes are equal |
+| Real part only (`imag == 0`) | `3` |
+| Imaginary part only, positive | `4 j` |
+| Imaginary part only, negative | `-4 j` |
+| Both parts, positive imaginary | `1 + 2 j` |
+| Both parts, negative imaginary | `1 - 2 j` |
 
-## set_index Rules
+## Qt Viewer Cell Formatting
 
-| Data structure | Result |
-|---|---|
-| All groups: same run count, same lengths, same values | `Uniform` dim |
-| All groups: same run count, same lengths, different values | `Regular Grouped` dim |
-| Groups with different run counts or lengths | **throws** — use `add_grouped_index_groups()` |
+`DataFrameModel::formatCell` uses `unit_format::Format(qty, value)` for all numeric types (int, double, complex), regardless of whether the column has a quantity set. Unitless quantities (`""`) produce plain numbers without a unit suffix. This ensures consistent formatting with the rest of the library.

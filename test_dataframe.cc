@@ -738,9 +738,9 @@ int main() {
         assert(df.type() == "sparam");
         assert(df.name() == "S21");
 
-        // loc inherits type
+        // loc does NOT inherit type (index changes)
         auto l = df.loc({0});
-        assert(l->type() == "sparam");
+        assert(l->type().empty());
 
         // sub inherits type
         auto s = df.sub("v");
@@ -880,7 +880,30 @@ int main() {
         df.add_column<std::complex<double>>("z", {{1.0, 2.0}, {-1.0, -0.5}});
         std::string csv = df.to_csv();
         assert(csv.find("z\n") == 0);
-        assert(csv.find("(1+2j)") != std::string::npos);
+        // New format: "1 + 2 j"  (real-only: "3", imag-only: "4 j", negative imag: "1 - 0.5 j")
+        assert(csv.find("1 + 2 j") != std::string::npos);
+        assert(csv.find("-1 - 0.5 j") != std::string::npos);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 41b: complex to_string display ===
+    std::cout << "\n=== Test 41b: complex to_string display ===" << std::endl;
+    {
+        using C = std::complex<double>;
+        DataFrame df;
+        df.add_column<C>("z", {
+            C(3.0,  0.0),   // real only        -> "3"
+            C(0.0,  4.0),   // imag only (+)    -> "4 j"
+            C(0.0, -4.0),   // imag only (-)    -> "-4 j"
+            C(1.0,  2.0),   // both +           -> "1 + 2 j"
+            C(1.0, -2.0),   // both -           -> "1 - 2 j"
+        });
+        const auto& col = df.get_column("z");
+        assert(col.to_string(0) == "3");
+        assert(col.to_string(1) == "4 j");
+        assert(col.to_string(2) == "-4 j");
+        assert(col.to_string(3) == "1 + 2 j");
+        assert(col.to_string(4) == "1 - 2 j");
     }
     std::cout << "PASSED" << std::endl;
 
@@ -2108,6 +2131,141 @@ int main() {
         auto mc = df->get_matrix_column<double>("M");
         assert(mc.size() == 3 && mc[0].size() == 2 && mc[0][0].size() == 2);
         assert(approx_equal(mc[0][0][0], 1.0) && approx_equal(mc[2][1][1], 204.0));
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B8: conj / max / min / zin
+    // ----------------------------------------------------------------
+    {
+        std::cout << "\n=== Test B8: conj / max / min / zin ===" << std::endl;
+        using C = std::complex<double>;
+
+        // --- conj ---
+        std::cout << "  conj complex..." << std::flush;
+        {
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<C>("z", {C(1,2), C(3,-4), C(0,1)});
+            auto r = df->math_conj();
+            auto& v = r->get_column_as<C>("z");
+            assert(v[0] == C(1,-2) && v[1] == C(3,4) && v[2] == C(0,-1));
+
+            // identity for real
+            auto df2 = std::make_shared<DataFrame>();
+            df2->add_column<double>("x", {1.0, 2.0, 3.0});
+            auto r2 = df2->math_conj();
+            auto& v2 = r2->get_column_as<double>("x");
+            assert(approx_equal(v2[0], 1.0) && approx_equal(v2[2], 3.0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- zin (S11 -> Zin) ---
+        std::cout << "  zin..." << std::flush;
+        {
+            // S11 = 0 -> Zin = Z0*(1+0)/(1-0) = Z0 = 50
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<C>("S11", {C(0,0)});
+            auto r = df->math_zin(C(50,0));
+            auto& v = r->get_column_as<C>("S11");
+            assert(std::abs(v[0] - C(50,0)) < 1e-9);
+
+            // S11 = -1 -> Zin = Z0*0/2 = 0
+            auto df2 = std::make_shared<DataFrame>();
+            df2->add_column<C>("S11", {C(-1,0)});
+            auto r2 = df2->math_zin(C(50,0));
+            assert(std::abs(r2->get_column_as<C>("S11")[0]) < 1e-9);
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min (no index) ---
+        std::cout << "  max/min no-index..." << std::flush;
+        {
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<double>("x", {3.0, 1.0, 4.0, 1.0, 5.0});
+            auto rmax = df->max();
+            auto rmin = df->min();
+            assert(rmax->num_rows() == 1);
+            assert(approx_equal(rmax->get_column_as<double>("x")[0], 5.0));
+            assert(approx_equal(rmin->get_column_as<double>("x")[0], 1.0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min (with 1 index dim → global reduce) ---
+        std::cout << "  max/min 1-dim..." << std::flush;
+        {
+            // 1 uniform dim (4 unique levels) → reduce last (only) dim → 1 row
+            auto df = std::make_shared<DataFrame>();
+            df->add_uniform_index<int>("freq", {1, 2, 3, 4});
+            df->add_column<double>("val", {3.0, 7.0, 2.0, 8.0});
+            auto rmax = df->max();
+            assert(rmax->num_rows() == 1);
+            assert(approx_equal(rmax->get_column_as<double>("val")[0], 8.0));
+            auto rmin = df->min();
+            assert(approx_equal(rmin->get_column_as<double>("val")[0], 2.0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min (with 2 index dims → reduce inner, keep outer) ---
+        std::cout << "  max/min 2-dim..." << std::flush;
+        {
+            // a(outer)=[1,1,2,2], b(inner)=[10,20,10,20]
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<int>("a",   {1, 1, 2, 2});
+            df->add_column<int>("b",   {10, 20, 10, 20});
+            df->add_column<double>("val", {3.0, 7.0, 2.0, 8.0});
+            df->set_index({"a", "b"});
+            auto rmax = df->max(); // reduce b (last dim) → 1 dim (a), 2 rows
+            assert(rmax->num_rows() == 2);
+            assert(rmax->index_names().size() == 1);
+            auto& mvals = rmax->get_column_as<double>("val");
+            assert(approx_equal(mvals[0], 7.0) && approx_equal(mvals[1], 8.0));
+            auto rmin = df->min();
+            auto& mnvals = rmin->get_column_as<double>("val");
+            assert(approx_equal(mnvals[0], 3.0) && approx_equal(mnvals[1], 2.0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min (2-dim + dep col: outer=level, inner=number, dep=PAE) ---
+        std::cout << "  max/min 2-dim+dep..." << std::flush;
+        {
+            // level=[1,1,1,2,2,2], number=[10,20,30,10,20,30], PAE=[70,80,75,60,90,65]
+            // max per level: group0->80, group1->90
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<int>("level",  {1, 1, 1, 2, 2, 2});
+            df->add_column<int>("number", {10,20,30,10,20,30});
+            df->add_column<double>("PAE", {70.0,80.0,75.0,60.0,90.0,65.0});
+            df->set_index({"level","number"});
+            auto rmax = df->max();
+            assert(rmax->num_rows() == 2);
+            assert(rmax->num_indices() == 1);
+            assert(rmax->index_names()[0] == "level");
+            auto& pmax = rmax->get_column_as<double>("PAE");
+            assert(approx_equal(pmax[0], 80.0) && approx_equal(pmax[1], 90.0));
+            auto rmin = df->min();
+            auto& pmin = rmin->get_column_as<double>("PAE");
+            assert(approx_equal(pmin[0], 70.0) && approx_equal(pmin[1], 60.0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min (ragged grouped inner dim + dep col) ---
+        // level(uniform 2) x number(ragged: 3+2) + dep PAE
+        // max: level1->80, level2->90;  min: level1->70, level2->60
+        std::cout << "  max/min ragged-grouped..." << std::flush;
+        {
+            auto df = std::make_shared<DataFrame>();
+            df->add_uniform_index<int>("level", {1, 2});
+            df->add_grouped_index_groups<int>("number", {{10,20,30},{10,20}});
+            df->add_column<double>("PAE", {70.0,80.0,75.0,60.0,90.0});
+            auto rmax = df->max();
+            assert(rmax->num_rows() == 2);
+            assert(rmax->num_indices() == 1);
+            assert(rmax->index_names()[0] == "level");
+            auto& pmax = rmax->get_column_as<double>("PAE");
+            assert(approx_equal(pmax[0], 80.0) && approx_equal(pmax[1], 90.0));
+            auto rmin = df->min();
+            auto& pmin = rmin->get_column_as<double>("PAE");
+            assert(approx_equal(pmin[0], 70.0) && approx_equal(pmin[1], 60.0));
+        }
     }
     std::cout << "PASSED" << std::endl;
 

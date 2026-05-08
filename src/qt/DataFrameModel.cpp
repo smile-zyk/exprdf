@@ -130,40 +130,22 @@ void DataFrameModel::fetchMore(const QModelIndex& parent)
 
 QString DataFrameModel::formatCell(const Column& col, std::size_t row, std::size_t elem) const
 {
-    // Array (list/matrix) column: display the single expanded element.
-    if (!col.shape.empty()) {
-        return QString::fromStdString(col.element_to_string(row, elem));
-    }
-
+    // For scalar columns elem is the sentinel ~0; actual flat index is just `row`.
+    // For list/matrix columns flat index is row * elem_per_row() + elem.
+    const std::size_t flat_idx = col.shape.empty() ? row
+                                                   : row * col.elem_per_row() + elem;
     const std::string& qty = col.quantity;
 
     switch (col.tag) {
-    case DType::Int: {
-        int v = col.as<int>()[row];
-        if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, v));
-        return QString::number(v);
-    }
-    case DType::Double: {
-        double v = col.as<double>()[row];
-        if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, v));
-        return QString::number(v, 'g', 10);
-    }
+    case DType::Int:
+        return QString::fromStdString(unit_format::Format(qty, col.as<int>()[flat_idx]));
+    case DType::Double:
+        return QString::fromStdString(unit_format::Format(qty, col.as<double>()[flat_idx]));
     case DType::String:
-        return QString::fromStdString(col.as<std::string>()[row]);
-    case DType::Complex: {
-        const std::complex<double>& c = col.as<std::complex<double>>()[row];
-        if (!qty.empty())
-            return QString::fromStdString(unit_format::Format(qty, c));
-        QString s;
-        s += QString::number(c.real(), 'g', 6);
-        if (c.imag() >= 0) s += " + ";
-        else s += " - ";
-        s += QString::number(std::abs(c.imag()), 'g', 6);
-        s += " j";
-        return s;
-    }
+        return QString::fromStdString(col.as<std::string>()[flat_idx]);
+    case DType::Complex:
+        return QString::fromStdString(
+            unit_format::Format(qty, col.as<std::complex<double>>()[flat_idx]));
     }
     return QString();
 }

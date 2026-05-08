@@ -89,9 +89,15 @@ inline std::string column_val_to_string<std::string>(const std::string& v) { ret
 template <>
 inline std::string column_val_to_string<std::complex<double>>(const std::complex<double>& v) {
     std::ostringstream ss;
-    ss << "(" << v.real();
-    if (v.imag() >= 0) ss << "+";
-    ss << v.imag() << "j)";
+    const double r = v.real(), im = v.imag();
+    if (r != 0.0 && im != 0.0) {
+        ss << r << (im >= 0 ? " + " : " - ") << std::abs(im) << " j";
+    } else if (im != 0.0) {
+        if (im < 0) ss << "-";
+        ss << std::abs(im) << " j";
+    } else {
+        ss << r;
+    }
     return ss.str();
 }
 
@@ -544,7 +550,7 @@ public:
         columns_[name] = col;
     }
 
-    // add_matrix_column: each row holds a fixed m×n matrix of T (row-major).
+    // add_matrix_column: each row holds a fixed mxn matrix of T (row-major).
     // data[i] is a vector of m vectors each of length n.
     // Indexing: get_matrix_element(name, i, j) where i,j are 1-based.
     template <typename T>
@@ -697,7 +703,7 @@ public:
         return columns_.size();
     }
     // at<T>(col, row): read scalar element at conceptual row (0-based).
-    // Throws for list/matrix columns — use at(col, row, k) or at(col, row, i, j).
+    // Throws for list/matrix columns - use at(col, row, k) or at(col, row, i, j).
     template <typename T>
     T at(const std::string& col, std::size_t row) const {
         const Column& c = get_col(col);
@@ -742,7 +748,7 @@ public:
     }
 
     // set<T>(col, row, value): write scalar element at conceptual row (0-based).
-    // Throws for list/matrix columns — use set(col, row, k, v) or set(col, row, i, j, v).
+    // Throws for list/matrix columns - use set(col, row, k, v) or set(col, row, i, j, v).
     template <typename T>
     void set(const std::string& col, std::size_t row, const T& value) {
         const Column& c = get_col(col);
@@ -1877,7 +1883,7 @@ public:
         return std::vector<T>(flat.begin() + row * n, flat.begin() + (row + 1) * n);
     }
 
-    // get_matrix_row<T>: return the full m×n matrix for a single conceptual row (0-based).
+    // get_matrix_row<T>: return the full mxn matrix for a single conceptual row (0-based).
     template <typename T>
     std::vector<std::vector<T>> get_matrix_row(const std::string& name, std::size_t row) const {
         const Column& col = get_col(name);
@@ -2162,10 +2168,10 @@ public:
     //  real     | double  | double  | double  (z.real())
     //  imag     | double  | double  | double  (z.imag())
     //  phase    | double  | double  | double  (arg(z), radians)
-    //  dB       | double  | double  | double  (20·log10|z|)
-    //  dBm      | double  | double  | double  (10·log10(|z|·1000))
+    //  dB       | double  | double  | double  (20*log10|z|)
+    //  dBm      | double  | double  | double  (10*log10(|z|*1000))
     //  wtodBm   | double  | double  | (throws; real power input only)
-    //  sqr      | int     | double  | complex (x²)
+    //  sqr      | int     | double  | complex (x^2)
     //  sqrt     | double  | double  | complex
     //  exp      | double  | double  | complex
     //  ln       | double  | double  | complex
@@ -2271,6 +2277,63 @@ public:
                              [](const C& z) { return std::log10(z); });
     }
 
+    // conj: complex conjugate of the last column.
+    //   complex -> complex (conjugate)
+    //   int / double -> unchanged (identity, real values are their own conjugate)
+    //   string -> throws
+    std::shared_ptr<DataFrame> math_conj() const {
+        using C = std::complex<double>;
+        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
+        const std::string& ln = col_order_.back();
+        const Column& cc = get_col(ln);
+        auto r = copy();
+        switch (cc.tag) {
+            case DType::Int:    break; // real: conj is identity
+            case DType::Double: break; // real: conj is identity
+            case DType::Complex:
+                for (auto& z : r->get_col(ln).as<C>()) z = std::conj(z);
+                break;
+            case DType::String:
+                throw std::invalid_argument("conj: string columns not supported");
+        }
+        return r;
+    }
+
+    // zin: input impedance from reflection coefficient S11.
+    //   Computes Zin = Z0 * (1 + S11) / (1 - S11) element-wise on the last column.
+    //   Z0 can be real (double) or complex; the last column must be int, double, or complex.
+    //   Result is always a complex column.
+    std::shared_ptr<DataFrame> math_zin(std::complex<double> z0) const {
+        using C = std::complex<double>;
+        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
+        const std::string& ln = col_order_.back();
+        const Column& cc = get_col(ln);
+        if (cc.tag == DType::String)
+            throw std::invalid_argument("zin: string columns not supported");
+        std::vector<C> src = to_complex_vec(cc);
+        std::vector<C> out; out.reserve(src.size());
+        for (const auto& s : src) {
+            C denom = C(1.0, 0.0) - s;
+            if (std::abs(denom) == 0.0)
+                throw std::invalid_argument("zin: S11 = 1 leads to division by zero");
+            out.push_back(z0 * (C(1.0, 0.0) + s) / denom);
+        }
+        auto r = copy();
+        Column nc = make_column<C>(out); nc.quantity = cc.quantity;
+        r->columns_[ln] = std::move(nc);
+        return r;
+    }
+
+    // max / min: reduce the last independent dimension.
+    //   If index_dims_ is non-empty, groups rows by the outer (all but last) index dims,
+    //   then takes the element-wise max/min over the last index dimension within each group.
+    //   Result DataFrame has one fewer index dimension (last dim is removed).
+    //   If there is only one index dimension, result has no index.
+    //   If there is no index, returns a single-row DataFrame with the global max/min.
+    //   int -> int,  double -> double,  complex -> throws (no ordering),  string -> throws.
+    std::shared_ptr<DataFrame> max() const { return reduce_last_dim(true); }
+    std::shared_ptr<DataFrame> min() const { return reduce_last_dim(false); }
+
 private:
     // --- C++11 arithmetic function objects (replaces C++14 generic lambdas) ---
     struct Arith_Add  { template<typename T> T operator()(T a, T b) const { return a + b; } };
@@ -2306,7 +2369,7 @@ private:
         return r;
     }
 
-    // unary_promote: int→double, double→double, complex→complex.
+    // unary_promote: int->double, double->double, complex->complex.
     std::shared_ptr<DataFrame> unary_promote(
         std::function<double(double)> fn_d,
         std::function<std::complex<double>(const std::complex<double>&)> fn_c) const
@@ -2476,6 +2539,181 @@ private:
         return result;
     }
 
+    // reduce_last_dim: implementation of max / min.
+    // The last column (dep, or the last index col when all-index) is reduced to one value
+    // per outer group.  Groups are read directly from the index structure - no key hashing.
+    // The last index dim column is dropped from the result.
+    std::shared_ptr<DataFrame> reduce_last_dim(bool take_max) const {
+        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
+        const std::string& ln = col_order_.back();
+        const Column& cc = get_col(ln);
+        if (cc.tag == DType::Complex)
+            throw std::invalid_argument("max/min: complex columns have no ordering");
+        if (cc.tag == DType::String)
+            throw std::invalid_argument("max/min: string columns not supported");
+        if (!cc.shape.empty())
+            throw std::invalid_argument("max/min: non-scalar columns not supported");
+
+        std::size_t nrows  = num_rows();
+        std::size_t ndims  = index_dims_.size();
+
+        // Column to drop from the result (the last index dim col, or ln itself if no index).
+        const std::string& drop_col = (ndims > 0) ? index_dims_.back().name : ln;
+
+        // Contiguous group sizes - one entry per outer group.
+        std::vector<std::size_t> group_sizes;
+        if (ndims == 0) {
+            group_sizes.push_back(nrows);                       // single global group
+        } else {
+            const IndexDim& last = index_dims_.back();
+            if (last.kind == IndexKind::Uniform) {
+                std::size_t gs = last.level_count();
+                std::size_t ng = (gs > 0) ? nrows / gs : 0;
+                group_sizes.assign(ng, gs);
+            } else {
+                group_sizes = last.group_lengths;
+            }
+        }
+
+        std::size_t num_groups = group_sizes.size();
+
+        // First row of each group - representative for outer index columns.
+        std::vector<std::size_t> rep_rows;
+        rep_rows.reserve(num_groups);
+        {
+            std::size_t r = 0;
+            for (std::size_t g = 0; g < num_groups; ++g) {
+                rep_rows.push_back(r);
+                r += group_sizes[g];
+            }
+        }
+
+        auto result = std::make_shared<DataFrame>();
+        result->name_ = name_;
+        result->type_ = type_;
+
+        // Copy every column except ln and drop_col using representative rows.
+        for (const auto& cname : col_order_) {
+            if (cname == ln || cname == drop_col) continue;
+            result->col_order_.push_back(cname);
+            result->columns_[cname] = get_col(cname).gather(rep_rows);
+        }
+
+        // Reduce ln per group, then concatenate into one column.
+        std::vector<Column> reduced;
+        reduced.reserve(num_groups);
+        {
+            std::size_t r = 0;
+            for (std::size_t g = 0; g < num_groups; ++g) {
+                std::vector<std::size_t> rows(group_sizes[g]);
+                for (std::size_t i = 0; i < group_sizes[g]; ++i) rows[i] = r + i;
+                r += group_sizes[g];
+                reduced.push_back(reduce_rows(cc, rows, take_max));
+            }
+        }
+        Column final_col = reduced[0];
+        for (std::size_t g = 1; g < num_groups; ++g)
+            final_col = concat_columns(final_col, reduced[g]);
+        final_col.quantity = cc.quantity;
+        result->col_order_.push_back(ln);
+        result->columns_[ln] = std::move(final_col);
+
+        // Copy outer index dims (drop the last one) and fix up metadata.
+        for (std::size_t d = 0; d + 1 < ndims; ++d)
+            result->index_dims_.push_back(index_dims_[d]);
+        if (ndims > 1)
+            rebuild_index_dims(*result);
+
+        return result;
+    }
+
+    // Reduce a set of rows in a column to a single value (max or min).
+    // For list/matrix columns, reduces element-wise across rows.
+    static Column reduce_rows(const Column& col, const std::vector<std::size_t>& rows, bool take_max) {
+        if (rows.empty()) throw std::invalid_argument("reduce_rows: empty row set");
+
+        if (col.shape.empty()) {
+            // Scalar column
+            if (col.tag == DType::Int) {
+                std::vector<int> out;
+                int val = col.as<int>()[rows[0]];
+                for (std::size_t i = 1; i < rows.size(); ++i)
+                    val = take_max ? std::max(val, col.as<int>()[rows[i]])
+                                   : std::min(val, col.as<int>()[rows[i]]);
+                out.push_back(val);
+                return make_column<int>(out);
+            } else { // Double
+                std::vector<double> out;
+                double val = col.as<double>()[rows[0]];
+                for (std::size_t i = 1; i < rows.size(); ++i)
+                    val = take_max ? std::max(val, col.as<double>()[rows[i]])
+                                   : std::min(val, col.as<double>()[rows[i]]);
+                out.push_back(val);
+                return make_column<double>(out);
+            }
+        }
+
+        // List or matrix: element-wise reduce across rows
+        std::size_t elem_size = 1;
+        for (auto d : col.shape) elem_size *= d;
+
+        if (col.tag == DType::Int) {
+            std::vector<int> acc(elem_size);
+            for (std::size_t k = 0; k < elem_size; ++k)
+                acc[k] = col.as<int>()[rows[0] * elem_size + k];
+            for (std::size_t i = 1; i < rows.size(); ++i)
+                for (std::size_t k = 0; k < elem_size; ++k) {
+                    int v = col.as<int>()[rows[i] * elem_size + k];
+                    acc[k] = take_max ? std::max(acc[k], v) : std::min(acc[k], v);
+                }
+            Column c = make_column<int>(acc);
+            c.shape = col.shape; return c;
+        } else {
+            std::vector<double> acc(elem_size);
+            for (std::size_t k = 0; k < elem_size; ++k)
+                acc[k] = col.as<double>()[rows[0] * elem_size + k];
+            for (std::size_t i = 1; i < rows.size(); ++i) {
+                const double* base = col.as<double>().data() + rows[i] * elem_size;
+                for (std::size_t k = 0; k < elem_size; ++k)
+                    acc[k] = take_max ? std::max(acc[k], base[k]) : std::min(acc[k], base[k]);
+            }
+            Column c = make_column<double>(acc);
+            c.shape = col.shape; return c;
+        }
+    }
+
+    // Concatenate two columns of the same type and shape.
+    static Column concat_columns(const Column& a, const Column& b) {
+        if (a.tag != b.tag) throw std::invalid_argument("concat_columns: type mismatch");
+        if (a.shape != b.shape) throw std::invalid_argument("concat_columns: shape mismatch");
+        Column c;
+        switch (a.tag) {
+            case DType::Int: {
+                auto va = a.as<int>(); const auto& vb = b.as<int>();
+                va.insert(va.end(), vb.begin(), vb.end());
+                c = make_column<int>(va); break;
+            }
+            case DType::Double: {
+                auto va = a.as<double>(); const auto& vb = b.as<double>();
+                va.insert(va.end(), vb.begin(), vb.end());
+                c = make_column<double>(va); break;
+            }
+            case DType::Complex: {
+                using C = std::complex<double>;
+                auto va = a.as<C>(); const auto& vb = b.as<C>();
+                va.insert(va.end(), vb.begin(), vb.end());
+                c = make_column<C>(va); break;
+            }
+            case DType::String: {
+                auto va = a.as<std::string>(); const auto& vb = b.as<std::string>();
+                va.insert(va.end(), vb.begin(), vb.end());
+                c = make_column<std::string>(va); break;
+            }
+        }
+        c.quantity = a.quantity; c.shape = a.shape;
+        return c;
+    }
+
     // Wrap a CSV field in double-quotes if it contains special characters.
     static std::string escape_csv_field(const std::string& field) {
         if (field.find_first_of(",\"\r\n") == std::string::npos) return field;
@@ -2500,11 +2738,11 @@ private:
     // After loc / sub reassemble rows, the IndexDim descriptors copied verbatim from
     // the source no longer reflect the result layout.  We repair each retained dim:
     //
-    //   Uniform dim  : num_outer  ← number of current outer groups (= product of
+    //   Uniform dim  : num_outer  <- number of current outer groups (= product of
     //                               all preceding level_counts in the result).
-    //                  levels     ← unchanged (same unique value set).
+    //                  levels     <- unchanged (same unique value set).
     //
-    //   Grouped dim  : group_lengths ← one entry per current outer group, each
+    //   Grouped dim  : group_lengths <- one entry per current outer group, each
     //                               equal to that group's total row count.
     //                  NOTE: a Grouped dim's column values within one outer group
     //                  are *not* required to be uniform runs; the group_length is
@@ -2512,9 +2750,9 @@ private:
     //                  (if any) is responsible for further sub-grouping.
     //
     // Algorithm: maintain "current outer groups" as (start, length) spans.
-    //   Uniform dim → advance outer groups by splitting each span on consecutive-
+    //   Uniform dim -> advance outer groups by splitting each span on consecutive-
     //                 equal runs (each run = one unique-level group).
-    //   Grouped dim → each current span IS one group; record its length, then
+    //   Grouped dim -> each current span IS one group; record its length, then
     //                 split it into per-run spans for the next level (if any).
     static void rebuild_index_dims(DataFrame& df) {
         std::size_t n = df.index_dims_.size();

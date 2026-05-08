@@ -955,7 +955,17 @@ PYBIND11_MODULE(exprdf, m) {
         }, py::arg("scalar"), "scalar - df on last column")
         .def("__rtruediv__", [](const exprdf::DataFrame& self, double s) {
             return s / self;
-        }, py::arg("scalar"), "scalar / df on last column");
+        }, py::arg("scalar"), "scalar / df on last column")
+        // conj / max / min / zin as methods
+        .def("conj", &exprdf::DataFrame::math_conj,
+             "Complex conjugate of last col; identity for real types")
+        .def("max",  &exprdf::DataFrame::max,
+             "Reduce last independent dim by taking max of last col")
+        .def("min",  &exprdf::DataFrame::min,
+             "Reduce last independent dim by taking min of last col")
+        .def("zin",  &exprdf::DataFrame::math_zin,
+             py::arg("z0") = std::complex<double>(50.0, 0.0),
+             "Zin = Z0*(1+S11)/(1-S11) on last col; default Z0=50");
 
     // ----------------------------------------------------------------
     // Module-level math functions (operate on the last column)
@@ -973,4 +983,16 @@ PYBIND11_MODULE(exprdf, m) {
     m.def("exp",    [](const exprdf::DataFrame& df) { return df.math_exp();    }, py::arg("df"), "exp(df): e^(last col), int→double, complex→complex");
     m.def("ln",     [](const exprdf::DataFrame& df) { return df.math_ln();     }, py::arg("df"), "ln(df): natural log of last col, int→double, complex→complex");
     m.def("log10",  [](const exprdf::DataFrame& df) { return df.math_log10();  }, py::arg("df"), "log10(df): log₁₀ of last col, int→double, complex→complex");
+
+    // conj / max / min / zin — module-level functions
+    m.def("conj",   [](const exprdf::DataFrame& df) { return df.math_conj(); },
+          py::arg("df"), "conj(df): complex conjugate of last col; identity for real");
+    m.def("max",    [](const exprdf::DataFrame& df) { return df.max(); },
+          py::arg("df"), "max(df): reduce last independent dim by max of last col");
+    m.def("min",    [](const exprdf::DataFrame& df) { return df.min(); },
+          py::arg("df"), "min(df): reduce last independent dim by min of last col");
+    m.def("zin",
+          [](const exprdf::DataFrame& df, std::complex<double> z0) { return df.math_zin(z0); },
+          py::arg("df"), py::arg("z0") = std::complex<double>(50.0, 0.0),
+          "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last col");
 }

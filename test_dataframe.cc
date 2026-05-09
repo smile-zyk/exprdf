@@ -2266,6 +2266,58 @@ int main() {
             auto& pmin = rmin->get_column_as<double>("PAE");
             assert(approx_equal(pmin[0], 70.0) && approx_equal(pmin[1], 60.0));
         }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min for complex: compare by magnitude, return original complex value ---
+        std::cout << "  max/min complex by magnitude..." << std::flush;
+        {
+            using C = std::complex<double>;
+            // |1+0j|=1, |0+3j|=3, |-2+0j|=2  →  max=|3|=3 (0+3j), min=|1|=1 (1+0j)
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<C>("z", {C(1,0), C(0,3), C(-2,0)});
+            auto rmax = df->max();
+            auto rmin = df->min();
+            assert(rmax->num_rows() == 1);
+            assert(rmax->get_column_as<C>("z")[0] == C(0,3));
+            assert(rmin->get_column_as<C>("z")[0] == C(1,0));
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- max / min throw for list columns ---
+        std::cout << "  max/min throws for list..." << std::flush;
+        {
+            auto df = std::make_shared<DataFrame>();
+            df->add_list_column<double>("v", {{1.0, 2.0}, {3.0, 4.0}});
+            bool threw = false;
+            try { df->max(); } catch (const std::invalid_argument&) { threw = true; }
+            assert(threw);
+        }
+        std::cout << "ok" << std::endl;
+
+        // --- unary negation ---
+        std::cout << "  unary negation..." << std::flush;
+        {
+            using C = std::complex<double>;
+            // double
+            auto df = std::make_shared<DataFrame>();
+            df->add_column<double>("x", {1.0, -2.0, 3.0});
+            auto r = -(*df);
+            auto& v = r->get_column_as<double>("x");
+            assert(approx_equal(v[0], -1.0) && approx_equal(v[1], 2.0) && approx_equal(v[2], -3.0));
+            // int
+            auto df2 = std::make_shared<DataFrame>();
+            df2->add_column<int>("n", {4, -5, 0});
+            auto r2 = -(*df2);
+            auto& v2 = r2->get_column_as<int>("n");
+            assert(v2[0] == -4 && v2[1] == 5 && v2[2] == 0);
+            // complex
+            auto df3 = std::make_shared<DataFrame>();
+            df3->add_column<C>("z", {C(1,2), C(-3,4)});
+            auto r3 = -(*df3);
+            auto& v3 = r3->get_column_as<C>("z");
+            assert(v3[0] == C(-1,-2) && v3[1] == C(3,-4));
+        }
+        std::cout << "ok" << std::endl;
     }
     std::cout << "PASSED" << std::endl;
 

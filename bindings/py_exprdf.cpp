@@ -956,6 +956,10 @@ PYBIND11_MODULE(exprdf, m) {
         .def("__rtruediv__", [](const exprdf::DataFrame& self, double s) {
             return s / self;
         }, py::arg("scalar"), "scalar / df on last column")
+        // unary negation
+        .def("__neg__", [](const exprdf::DataFrame& self) {
+            return -self;
+        }, "Negate all elements of last column (-df)")
         // conj / max / min / zin as methods
         .def("conj", &exprdf::DataFrame::math_conj,
              "Complex conjugate of last col; identity for real types")

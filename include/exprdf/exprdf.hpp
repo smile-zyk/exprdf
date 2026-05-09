@@ -2149,6 +2149,22 @@ public:
         return apply_scalar_op_last(s, Arith_Div());
     }
 
+    // Unary negation: negate all elements of the last column.
+    // int→int, double→double, complex→complex. Throws for string columns.
+    std::shared_ptr<DataFrame> operator-() const {
+        using C = std::complex<double>;
+        if (col_order_.empty()) throw std::invalid_argument("unary -: DataFrame has no columns");
+        const std::string& ln = col_order_.back();
+        auto r = copy();
+        switch (get_col(ln).tag) {
+            case DType::Int:     for (auto& x : r->get_col(ln).as<int>())    x = -x; break;
+            case DType::Double:  for (auto& x : r->get_col(ln).as<double>()) x = -x; break;
+            case DType::Complex: for (auto& z : r->get_col(ln).as<C>())      z = -z; break;
+            case DType::String:  throw std::invalid_argument("unary -: string columns not supported");
+        }
+        return r;
+    }
+
     // Scalar on left (commutative: +, *; non-commutative: -, /)
     friend std::shared_ptr<DataFrame> operator+(double s, const DataFrame& df) { return df + s; }
     friend std::shared_ptr<DataFrame> operator*(double s, const DataFrame& df) { return df * s; }
@@ -2547,12 +2563,10 @@ private:
         if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
         const std::string& ln = col_order_.back();
         const Column& cc = get_col(ln);
-        if (cc.tag == DType::Complex)
-            throw std::invalid_argument("max/min: complex columns have no ordering");
         if (cc.tag == DType::String)
             throw std::invalid_argument("max/min: string columns not supported");
         if (!cc.shape.empty())
-            throw std::invalid_argument("max/min: non-scalar columns not supported");
+            throw std::invalid_argument("max/min: list and matrix columns not supported");
 
         std::size_t nrows  = num_rows();
         std::size_t ndims  = index_dims_.size();
@@ -2642,6 +2656,19 @@ private:
                                    : std::min(val, col.as<int>()[rows[i]]);
                 out.push_back(val);
                 return make_column<int>(out);
+            } else if (col.tag == DType::Complex) {
+                using C = std::complex<double>;
+                const auto& data = col.as<C>();
+                C val = data[rows[0]];
+                double best = std::abs(val);
+                for (std::size_t i = 1; i < rows.size(); ++i) {
+                    double m = std::abs(data[rows[i]]);
+                    if (take_max ? (m > best) : (m < best)) {
+                        val = data[rows[i]];
+                        best = m;
+                    }
+                }
+                return make_column<C>({val});
             } else { // Double
                 std::vector<double> out;
                 double val = col.as<double>()[rows[0]];

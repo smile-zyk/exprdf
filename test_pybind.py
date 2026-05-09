@@ -1498,6 +1498,43 @@ assert rmax_rag.index_names() == ["level"]
 assert rmax_rag.get_column("PAE") == [80.0, 90.0]
 rmin_rag = df_b8_rag.min()
 assert rmin_rag.get_column("PAE") == [70.0, 60.0]
+
+# complex max/min: compare by magnitude, return original complex value
+df_b8_cplx = pdf.DataFrame()
+df_b8_cplx.add_column("z", [complex(1,0), complex(0,3), complex(-2,0)])
+rmax_c = df_b8_cplx.max()
+rmin_c = df_b8_cplx.min()
+assert rmax_c.num_rows() == 1
+assert rmax_c.get_column("z")[0] == complex(0,3)   # |0+3j|=3 is largest
+assert rmin_c.get_column("z")[0] == complex(1,0)   # |1+0j|=1 is smallest
+
+# max/min throws for list columns
+df_b8_list = pdf.DataFrame()
+df_b8_list.add_list_column("v", [[1.0, 2.0], [3.0, 4.0]])
+threw = False
+try:
+    df_b8_list.max()
+except Exception:
+    threw = True
+assert threw
+
+# unary negation
+df_neg = pdf.DataFrame()
+df_neg.add_column("x", [1.0, -2.0, 3.0])
+r_neg = -df_neg
+assert r_neg.get_column("x") == [-1.0, 2.0, -3.0]
+
+df_neg_int = pdf.DataFrame()
+df_neg_int.add_column("n", [4, -5, 0])
+r_neg_int = -df_neg_int
+assert r_neg_int.get_column("n") == [-4, 5, 0]
+
+df_neg_cplx = pdf.DataFrame()
+df_neg_cplx.add_column("z", [complex(1,2), complex(-3,4)])
+r_neg_cplx = -df_neg_cplx
+assert r_neg_cplx.get_column("z")[0] == complex(-1,-2)
+assert r_neg_cplx.get_column("z")[1] == complex(3,-4)
+
 print("PASSED")
 
 print("\n=== ALL PYTHON TESTS PASSED ===")

@@ -383,7 +383,7 @@ struct IndexDim {
     IndexKind kind;
     Column levels;                          // Uniform: unique ordered level values
     std::vector<std::size_t> group_lengths; // Grouped: inner element count per outer group
-    std::size_t num_outer = 1;              // Uniform: number of outer groups
+    std::size_t num_outer;                  // Uniform: number of outer groups
                                             //          (1 for the outermost dim; product of
                                             //           parent level counts for inner dims)
                                             // Grouped: unused -- use group_lengths.size()
@@ -421,6 +421,14 @@ struct IndexDim {
 
     bool is_uniform() const { return kind == IndexKind::Uniform; }
     bool is_grouped() const { return kind == IndexKind::Grouped; }
+
+    // Constructors (needed for C++11 compatibility: default member initializers
+    // make a struct non-aggregate in C++11, breaking brace initialization).
+    IndexDim() : kind(IndexKind::Uniform), num_outer(1) {}
+    IndexDim(std::string n, IndexKind k, Column lvls,
+             std::vector<std::size_t> glens, std::size_t no = 1)
+        : name(std::move(n)), kind(k), levels(std::move(lvls)),
+          group_lengths(std::move(glens)), num_outer(no) {}
 
     template <typename T>
     static IndexDim create_uniform(const std::string& name,

@@ -1537,4 +1537,95 @@ assert r_neg_cplx.get_column("z")[1] == complex(3,-4)
 
 print("PASSED")
 
+# ----------------------------------------------------------------
+print("\n=== Python Test B9: numpy array arithmetic ===")
+import numpy as np
+
+# --- double array, element-wise ---
+df_arr = pdf.DataFrame()
+df_arr.add_column("x", [1.0, 2.0, 3.0])
+
+r = df_arr * np.array([10.0, 20.0, 30.0])
+assert r.get_column("x") == [10.0, 40.0, 90.0]
+
+r = df_arr + np.array([1.0, 2.0, 3.0])
+assert r.get_column("x") == [2.0, 4.0, 6.0]
+
+r = df_arr - np.array([1.0, 1.0, 1.0])
+assert r.get_column("x") == [0.0, 1.0, 2.0]
+
+r = df_arr / np.array([2.0, 4.0, 1.0])
+assert r.get_column("x") == [0.5, 0.5, 3.0]
+
+# --- double array, size==1 broadcast ---
+r = df_arr * np.array([3.0])
+assert r.get_column("x") == [3.0, 6.0, 9.0]
+
+r = df_arr + np.array([10.0])
+assert r.get_column("x") == [11.0, 12.0, 13.0]
+
+# --- r-ops: arr OP df ---
+r = np.array([2.0, 4.0, 6.0]) / df_arr          # 2/1, 4/2, 6/3
+assert r.get_column("x") == [2.0, 2.0, 2.0]
+
+r = np.array([10.0, 10.0, 10.0]) - df_arr
+assert r.get_column("x") == [9.0, 8.0, 7.0]
+
+r = np.array([2.0]) * df_arr
+assert r.get_column("x") == [2.0, 4.0, 6.0]
+
+# --- int array ---
+df_int = pdf.DataFrame()
+df_int.add_column("n", [1, 2, 4])
+
+r = df_int * np.array([2, 3, 1], dtype=np.int32)
+assert r.get_column("n") == [2, 6, 4]
+
+r = df_int + np.array([10], dtype=np.int32)
+assert r.get_column("n") == [11, 12, 14]
+
+# --- complex array, element-wise: double col promoted to complex ---
+df_dbl = pdf.DataFrame()
+df_dbl.add_column("x", [1.0, 2.0, 3.0])
+
+r = df_dbl * np.array([1j, 2j, 3j])
+v = r.get_column("x")
+assert v[0] == complex(0, 1)
+assert v[1] == complex(0, 4)
+assert v[2] == complex(0, 9)
+
+r = df_dbl + np.array([1+1j, 2+2j, 3+3j])
+v = r.get_column("x")
+assert v[0] == complex(2, 1)
+assert v[1] == complex(4, 2)
+assert v[2] == complex(6, 3)
+
+# --- complex array, size==1 broadcast ---
+r = df_dbl * np.array([1j])
+v = r.get_column("x")
+assert v[0] == complex(0, 1)
+assert v[1] == complex(0, 2)
+assert v[2] == complex(0, 3)
+
+r = df_dbl + np.array([2+0j])
+v = r.get_column("x")
+assert v[0] == complex(3, 0)
+assert v[1] == complex(4, 0)
+assert v[2] == complex(5, 0)
+
+# --- complex r-ops ---
+r = np.array([1j, 2j, 3j]) * df_dbl
+v = r.get_column("x")
+assert v[0] == complex(0, 1)
+assert v[1] == complex(0, 4)
+assert v[2] == complex(0, 9)
+
+r = np.array([1j]) - df_dbl
+v = r.get_column("x")
+assert v[0] == complex(-1, 1)
+assert v[1] == complex(-2, 1)
+assert v[2] == complex(-3, 1)
+
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

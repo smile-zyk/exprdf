@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/complex.h>
+#include <pybind11/numpy.h>
 #include <exprdf/exprdf.hpp>
 
 namespace py = pybind11;
@@ -40,6 +41,41 @@ py::object py_get_column(const exprdf::DataFrame& self, const std::string& name)
     if (dt == "string")  return py::cast(self.get_column_as<std::string>(name));
     if (dt == "complex") return py::cast(self.get_column_as<std::complex<double>>(name));
     throw std::runtime_error("Unknown dtype: " + dt);
+}
+
+// ----------------------------------------------------------------
+// arr_to_df<T>: convert a 1-D numpy array to a single-column DataFrame
+// that can be used in the df OP arr element-wise operations.
+//
+// Rules:
+//   size == 1 -> broadcast scalar to num_rows() copies
+//   size == num_rows() -> use as-is
+//   otherwise -> throw
+//
+// The resulting column is named after self's last column so that
+// apply_binary_op_last picks it up by position (col_order_.back()).
+// ----------------------------------------------------------------
+template <typename T>
+static std::shared_ptr<exprdf::DataFrame> arr_to_df(
+    const exprdf::DataFrame& self,
+    py::array arr)
+{
+    auto buf = arr.request();
+    if (buf.size == 0)
+        throw std::invalid_argument("array is empty");
+    const T* ptr = static_cast<const T*>(buf.ptr);
+    std::size_t n     = static_cast<std::size_t>(buf.size);
+    std::size_t nrows = self.num_rows();
+    if (n != 1 && n != nrows)
+        throw std::invalid_argument(
+            "array length (" + std::to_string(n) +
+            ") must be 1 (scalar) or num_rows (" + std::to_string(nrows) + ")");
+    const std::string& cname = self.column_name(self.num_columns() - 1);
+    auto tmp = std::make_shared<exprdf::DataFrame>();
+    tmp->add_column<T>(cname, n == 1
+        ? std::vector<T>(nrows, ptr[0])
+        : std::vector<T>(ptr, ptr + n));
+    return tmp;
 }
 } // namespace
 
@@ -956,6 +992,55 @@ PYBIND11_MODULE(exprdf, m) {
         .def("__rtruediv__", [](const exprdf::DataFrame& self, double s) {
             return s / self;
         }, py::arg("scalar"), "scalar / df on last column")
+        // ---- array arithmetic (complex<double>) ----
+        // These MUST be registered before the double/int overloads.
+        // Without forcecast, only actual complex128 numpy arrays match here,
+        // so float64/int arrays fall through to the double/int overloads below.
+        // size==1: broadcast via arr_to_df (arr_to_df fills nrows copies).
+        // apply_binary_op_last then promotes int/double last col → complex automatically.
+        .def("__add__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self + *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__sub__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self - *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__mul__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self * *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__truediv__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self / *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__radd__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self + *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__rmul__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            return self * *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        .def("__rsub__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            auto r = self - *arr_to_df<std::complex<double>>(self, a); return -(*r);
+        }, py::arg("arr"))
+        .def("__rtruediv__", [](const exprdf::DataFrame& self, py::array_t<std::complex<double>, py::array::c_style> a) {
+            auto inv = 1.0 / self; return *inv * *arr_to_df<std::complex<double>>(self, a);
+        }, py::arg("arr"))
+        // ---- array arithmetic (double) ----
+        // arr_to_df handles size==1 broadcast and size==num_rows element-wise.
+        .def("__add__",      [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self + *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__sub__",      [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self - *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__mul__",      [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self * *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__truediv__",  [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self / *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__radd__",     [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self + *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__rmul__",     [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { return self * *arr_to_df<double>(self, a); }, py::arg("arr"))
+        .def("__rsub__",     [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { auto r = self - *arr_to_df<double>(self, a); return -(*r); }, py::arg("arr"))
+        .def("__rtruediv__", [](const exprdf::DataFrame& self, py::array_t<double, py::array::c_style|py::array::forcecast> a) { auto inv = 1.0 / self; return *inv * *arr_to_df<double>(self, a); }, py::arg("arr"))
+        // ---- array arithmetic (int) ----
+        .def("__add__",      [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self + *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__sub__",      [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self - *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__mul__",      [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self * *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__truediv__",  [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self / *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__radd__",     [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self + *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__rmul__",     [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { return self * *arr_to_df<int>(self, a); }, py::arg("arr"))
+        .def("__rsub__",     [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { auto r = self - *arr_to_df<int>(self, a); return -(*r); }, py::arg("arr"))
+        .def("__rtruediv__", [](const exprdf::DataFrame& self, py::array_t<int, py::array::c_style|py::array::forcecast> a) { auto inv = 1.0 / self; return *inv * *arr_to_df<int>(self, a); }, py::arg("arr"))
         // unary negation
         .def("__neg__", [](const exprdf::DataFrame& self) {
             return -self;
@@ -970,6 +1055,12 @@ PYBIND11_MODULE(exprdf, m) {
         .def("zin",  &exprdf::DataFrame::math_zin,
              py::arg("z0") = std::complex<double>(50.0, 0.0),
              "Zin = Z0*(1+S11)/(1-S11) on last col; default Z0=50");
+
+    // Setting __array_ufunc__ = None tells numpy to skip its ufunc machinery
+    // for DataFrame objects.  When numpy sees `arr OP df` and df has
+    // __array_ufunc__ = None it raises TypeError, which causes Python to fall
+    // back to df.__radd__ / __rsub__ / __rtruediv__ as intended.
+    m.attr("DataFrame").attr("__array_ufunc__") = py::none();
 
     // ----------------------------------------------------------------
     // Module-level math functions (operate on the last column)

@@ -2135,44 +2135,46 @@ int main() {
     std::cout << "PASSED" << std::endl;
 
     // ----------------------------------------------------------------
-    // Test B8: conj / max / min / zin
+    // Test B8: conj / max / min / zin  (all ops invoked via registry)
     // ----------------------------------------------------------------
     {
         std::cout << "\n=== Test B8: conj / max / min / zin ===" << std::endl;
         using C = std::complex<double>;
 
-        // --- conj ---
+        // --- conj (via get_fn / apply_fn) ---
         std::cout << "  conj complex..." << std::flush;
         {
+            auto fn_conj = exprdf::get_fn("conj");   // retrieve from registry by key
+
             auto df = std::make_shared<DataFrame>();
             df->add_column<C>("z", {C(1,2), C(3,-4), C(0,1)});
-            auto r = df->math_conj();
+            auto r = fn_conj(*df);
             auto& v = r->get_column_as<C>("z");
             assert(v[0] == C(1,-2) && v[1] == C(3,4) && v[2] == C(0,-1));
 
-            // identity for real
+            // identity for real – use apply_fn directly
             auto df2 = std::make_shared<DataFrame>();
             df2->add_column<double>("x", {1.0, 2.0, 3.0});
-            auto r2 = df2->math_conj();
+            auto r2 = exprdf::apply_fn("conj", *df2);
             auto& v2 = r2->get_column_as<double>("x");
             assert(approx_equal(v2[0], 1.0) && approx_equal(v2[2], 3.0));
         }
         std::cout << "ok" << std::endl;
 
-        // --- zin (S11 -> Zin) ---
+        // --- zin (S11 -> Zin) — not in registry (extra z0 param), call directly ---
         std::cout << "  zin..." << std::flush;
         {
             // S11 = 0 -> Zin = Z0*(1+0)/(1-0) = Z0 = 50
             auto df = std::make_shared<DataFrame>();
             df->add_column<C>("S11", {C(0,0)});
-            auto r = df->math_zin(C(50,0));
+            auto r = exprdf::zin(*df, C(50,0));
             auto& v = r->get_column_as<C>("S11");
             assert(std::abs(v[0] - C(50,0)) < 1e-9);
 
             // S11 = -1 -> Zin = Z0*0/2 = 0
             auto df2 = std::make_shared<DataFrame>();
             df2->add_column<C>("S11", {C(-1,0)});
-            auto r2 = df2->math_zin(C(50,0));
+            auto r2 = exprdf::zin(*df2, C(50,0));
             assert(std::abs(r2->get_column_as<C>("S11")[0]) < 1e-9);
         }
         std::cout << "ok" << std::endl;
@@ -2318,6 +2320,91 @@ int main() {
             assert(v3[0] == C(-1,-2) && v3[1] == C(3,-4));
         }
         std::cout << "ok" << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test B9: registry — get_fn / has_fn / apply_fn
+    // ----------------------------------------------------------------
+    {
+        std::cout << "\n=== Test B9: registry get_fn / has_fn / apply_fn ===" << std::endl;
+        using C = std::complex<double>;
+
+        // has_fn
+        assert(exprdf::has_fn("abs"));
+        assert(exprdf::has_fn("conj"));
+        assert(exprdf::has_fn("dB"));
+        assert(exprdf::has_fn("dBm"));
+        assert(exprdf::has_fn("sqrt"));
+        assert(exprdf::has_fn("exp"));
+        assert(exprdf::has_fn("ln"));
+        assert(exprdf::has_fn("log10"));
+        assert(exprdf::has_fn("sqr"));
+        assert(exprdf::has_fn("real"));
+        assert(exprdf::has_fn("imag"));
+        assert(exprdf::has_fn("phase"));
+        assert(exprdf::has_fn("mag"));
+        assert(exprdf::has_fn("wtodBm"));
+        assert(!exprdf::has_fn("nonexistent"));
+        std::cout << "  has_fn: ok" << std::endl;
+
+        // get_fn + call
+        {
+            auto df = std::make_shared<exprdf::DataFrame>();
+            df->add_column<double>("v", {4.0, 9.0, 16.0});
+
+            auto fn_sqrt = exprdf::get_fn("sqrt");
+            auto r = fn_sqrt(*df);
+            auto& vals = r->get_column_as<double>("v");
+            assert(approx_equal(vals[0], 2.0));
+            assert(approx_equal(vals[1], 3.0));
+            assert(approx_equal(vals[2], 4.0));
+        }
+        std::cout << "  get_fn(sqrt): ok" << std::endl;
+
+        // apply_fn — abs on complex
+        {
+            auto df = std::make_shared<exprdf::DataFrame>();
+            df->add_column<C>("z", {C(3.0, 4.0)});   // |z| = 5
+            auto r = exprdf::apply_fn("abs", *df);
+            auto& vals = r->get_column_as<double>("z");
+            assert(approx_equal(vals[0], 5.0));
+        }
+        std::cout << "  apply_fn(abs): ok" << std::endl;
+
+        // apply_fn — unknown key throws
+        {
+            auto df = std::make_shared<exprdf::DataFrame>();
+            df->add_column<double>("x", {1.0});
+            bool threw = false;
+            try { exprdf::apply_fn("no_such_op", *df); }
+            catch (const std::invalid_argument&) { threw = true; }
+            assert(threw);
+        }
+        std::cout << "  apply_fn(unknown) throws: ok" << std::endl;
+
+        // get_fn — unknown key throws
+        {
+            bool threw = false;
+            try { exprdf::get_fn("no_such_op"); }
+            catch (const std::invalid_argument&) { threw = true; }
+            assert(threw);
+        }
+        std::cout << "  get_fn(unknown) throws: ok" << std::endl;
+
+        // iterate registry — all expected names present
+        {
+            const auto& reg = exprdf::unary_registry();
+            const std::vector<std::string> expected = {
+                "abs","mag","real","imag","phase",
+                "dB","dBm","wtodBm","sqr","sqrt",
+                "exp","ln","log10","conj"
+            };
+            for (const auto& name : expected)
+                assert(reg.count(name) != 0);
+            assert(reg.size() >= expected.size());
+        }
+        std::cout << "  registry iteration: ok" << std::endl;
     }
     std::cout << "PASSED" << std::endl;
 

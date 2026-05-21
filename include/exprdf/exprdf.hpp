@@ -114,6 +114,9 @@ struct ColumnStorageBase {
     virtual std::shared_ptr<ColumnStorageBase> do_tile(std::size_t n) const = 0;
     virtual std::shared_ptr<ColumnStorageBase> do_extract_unique() const = 0;
     virtual bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const = 0;
+    // Append all elements from `other` into this storage.
+    // Throws std::invalid_argument if `other` has a different concrete type.
+    virtual void do_append(const ColumnStorageBase& other) = 0;
 };
 
 // Concrete storage for a supported type T.
@@ -186,6 +189,13 @@ struct ColumnStorage : ColumnStorageBase {
     bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const override {
         // Caller guarantees same DType tag -> same T
         return values_equal(data[row_a], static_cast<const ColumnStorage<T>&>(other).data[row_b]);
+    }
+
+    void do_append(const ColumnStorageBase& other) override {
+        const auto* src = dynamic_cast<const ColumnStorage<T>*>(&other);
+        if (!src)
+            throw std::invalid_argument("do_append: type mismatch between source and destination storage");
+        data.insert(data.end(), src->data.begin(), src->data.end());
     }
 };
 
@@ -2127,64 +2137,14 @@ public:
         return rename(col_order_.size() - 1, new_name);
     }
 
-    // --- Arithmetic operators (operate on the last column) ---
-    // df1 + df2 : element-wise add of the last columns; result is a copy of *this.
-    // Both DataFrames must have equal num_rows() and the same last-column dtype.
-    // Scalar overloads accept double; int columns truncate the result back to int.
-    std::shared_ptr<DataFrame> operator+(const DataFrame& o) const {
-        return apply_binary_op_last(o, Arith_Add());
-    }
-    std::shared_ptr<DataFrame> operator-(const DataFrame& o) const {
-        return apply_binary_op_last(o, Arith_Sub());
-    }
-    std::shared_ptr<DataFrame> operator*(const DataFrame& o) const {
-        return apply_binary_op_last(o, Arith_Mul());
-    }
-    std::shared_ptr<DataFrame> operator/(const DataFrame& o) const {
-        return apply_binary_op_last(o, Arith_Div());
-    }
-
-    std::shared_ptr<DataFrame> operator+(double s) const {
-        return apply_scalar_op_last(s, Arith_Add());
-    }
-    std::shared_ptr<DataFrame> operator-(double s) const {
-        return apply_scalar_op_last(s, Arith_Sub());
-    }
-    std::shared_ptr<DataFrame> operator*(double s) const {
-        return apply_scalar_op_last(s, Arith_Mul());
-    }
-    std::shared_ptr<DataFrame> operator/(double s) const {
-        return apply_scalar_op_last(s, Arith_Div());
-    }
-
-    // Unary negation: negate all elements of the last column.
-    // int→int, double→double, complex→complex. Throws for string columns.
-    std::shared_ptr<DataFrame> operator-() const {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("unary -: DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        auto r = copy();
-        switch (get_col(ln).tag) {
-            case DType::Int:     for (auto& x : r->get_col(ln).as<int>())    x = -x; break;
-            case DType::Double:  for (auto& x : r->get_col(ln).as<double>()) x = -x; break;
-            case DType::Complex: for (auto& z : r->get_col(ln).as<C>())      z = -z; break;
-            case DType::String:  throw std::invalid_argument("unary -: string columns not supported");
-        }
-        return r;
-    }
-
-    // Scalar on left (commutative: +, *; non-commutative: -, /)
-    friend std::shared_ptr<DataFrame> operator+(double s, const DataFrame& df) { return df + s; }
-    friend std::shared_ptr<DataFrame> operator*(double s, const DataFrame& df) { return df * s; }
-    friend std::shared_ptr<DataFrame> operator-(double s, const DataFrame& df) {
-        return df.apply_scalar_op_last(s, Arith_SubR());
-    }
-    friend std::shared_ptr<DataFrame> operator/(double s, const DataFrame& df) {
-        return df.apply_scalar_op_last(s, Arith_DivR());
-    }
+    // --- Math functions (operate on the last column) ---
+    // Implementations in src/df_ops_builtins.cpp (registry-based).
+    // Free functions:  exprdf::abs(df), exprdf::dB(df), exprdf::apply_fn("name", df), ...
+    // Operators:       df + df, df + scalar, df * scalar, -df  (free functions in df_ops.hpp)
+    // To add a new function: see DFOpsRegistrar_() in src/df_ops_builtins.cpp.
 
     // --- Unary math functions (operate on the last column) ---
-    // Each returns a copy of *this with the last column replaced by the result.
+    // All implementations moved to math_ops_impl.hpp (registry-based).
     //
     //  Function | int     | double  | complex
     //  ---------+---------+---------+------------------
@@ -2201,152 +2161,9 @@ public:
     //  ln       | double  | double  | complex
     //  log10    | double  | double  | complex
 
-    std::shared_ptr<DataFrame> math_abs() const {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        auto r = copy();
-        switch (cc.tag) {
-            case DType::Int:     for (auto& x : r->get_col(ln).as<int>())    x = std::abs(x); break;
-            case DType::Double:  for (auto& x : r->get_col(ln).as<double>()) x = std::abs(x); break;
-            case DType::Complex: {
-                const auto& src = cc.as<C>();
-                std::vector<double> out(src.size());
-                for (std::size_t i = 0; i < src.size(); ++i) out[i] = std::abs(src[i]);
-                Column nc = make_column<double>(out); nc.quantity = cc.quantity;
-                r->columns_[ln] = std::move(nc); break;
-            }
-            case DType::String: throw std::invalid_argument("abs: string columns not supported");
-        }
-        return r;
-    }
-    std::shared_ptr<DataFrame> math_mag() const { return math_abs(); }
-
-    std::shared_ptr<DataFrame> math_real() const {
-        using C = std::complex<double>;
-        return unary_to_double([](double x)      { return x; },
-                               [](const C& z)    { return z.real(); });
-    }
-    std::shared_ptr<DataFrame> math_imag() const {
-        using C = std::complex<double>;
-        return unary_to_double([](double)         { return 0.0; },
-                               [](const C& z)    { return z.imag(); });
-    }
-    std::shared_ptr<DataFrame> math_phase() const {
-        using C = std::complex<double>;
-        return unary_to_double([](double x)      { return std::atan2(0.0, x); },
-                               [](const C& z)    { return std::arg(z); });
-    }
-    std::shared_ptr<DataFrame> math_dB() const {
-        using C = std::complex<double>;
-        return unary_to_double([](double x)      { return 20.0 * std::log10(std::abs(x)); },
-                               [](const C& z)    { return 20.0 * std::log10(std::abs(z)); });
-    }
-    std::shared_ptr<DataFrame> math_dBm() const {
-        using C = std::complex<double>;
-        return unary_to_double([](double x)      { return 10.0 * std::log10(std::abs(x) * 1000.0); },
-                               [](const C& z)    { return 10.0 * std::log10(std::abs(z) * 1000.0); });
-    }
-
-    std::shared_ptr<DataFrame> math_wtodBm() const {
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        std::vector<double> out; out.reserve(cc.size());
-        switch (cc.tag) {
-            case DType::Int:     for (auto x : cc.as<int>())    out.push_back(10.0 * std::log10(double(x) * 1000.0)); break;
-            case DType::Double:  for (auto x : cc.as<double>()) out.push_back(10.0 * std::log10(x * 1000.0)); break;
-            case DType::Complex: throw std::invalid_argument("wtodBm: complex input not supported (use dBm for complex magnitude)");
-            case DType::String:  throw std::invalid_argument("wtodBm: string columns not supported");
-        }
-        auto r = copy();
-        Column nc = make_column<double>(out); nc.quantity = cc.quantity;
-        r->columns_[ln] = std::move(nc);
-        return r;
-    }
-
-    std::shared_ptr<DataFrame> math_sqr() const {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        auto r = copy();
-        switch (get_col(ln).tag) {
-            case DType::Int:     for (auto& x : r->get_col(ln).as<int>())    x = x * x; break;
-            case DType::Double:  for (auto& x : r->get_col(ln).as<double>()) x = x * x; break;
-            case DType::Complex: for (auto& z : r->get_col(ln).as<C>())      z = z * z; break;
-            case DType::String:  throw std::invalid_argument("sqr: string columns not supported");
-        }
-        return r;
-    }
-
-    std::shared_ptr<DataFrame> math_sqrt() const {
-        using C = std::complex<double>;
-        return unary_promote([](double x)   { return std::sqrt(x); },
-                             [](const C& z) { return std::sqrt(z); });
-    }
-    std::shared_ptr<DataFrame> math_exp() const {
-        using C = std::complex<double>;
-        return unary_promote([](double x)   { return std::exp(x); },
-                             [](const C& z) { return std::exp(z); });
-    }
-    std::shared_ptr<DataFrame> math_ln() const {
-        using C = std::complex<double>;
-        return unary_promote([](double x)   { return std::log(x); },
-                             [](const C& z) { return std::log(z); });
-    }
-    std::shared_ptr<DataFrame> math_log10() const {
-        using C = std::complex<double>;
-        return unary_promote([](double x)   { return std::log10(x); },
-                             [](const C& z) { return std::log10(z); });
-    }
-
-    // conj: complex conjugate of the last column.
-    //   complex -> complex (conjugate)
-    //   int / double -> unchanged (identity, real values are their own conjugate)
-    //   string -> throws
-    std::shared_ptr<DataFrame> math_conj() const {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        auto r = copy();
-        switch (cc.tag) {
-            case DType::Int:    break; // real: conj is identity
-            case DType::Double: break; // real: conj is identity
-            case DType::Complex:
-                for (auto& z : r->get_col(ln).as<C>()) z = std::conj(z);
-                break;
-            case DType::String:
-                throw std::invalid_argument("conj: string columns not supported");
-        }
-        return r;
-    }
-
-    // zin: input impedance from reflection coefficient S11.
-    //   Computes Zin = Z0 * (1 + S11) / (1 - S11) element-wise on the last column.
-    //   Z0 can be real (double) or complex; the last column must be int, double, or complex.
-    //   Result is always a complex column.
-    std::shared_ptr<DataFrame> math_zin(std::complex<double> z0) const {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        if (cc.tag == DType::String)
-            throw std::invalid_argument("zin: string columns not supported");
-        std::vector<C> src = to_complex_vec(cc);
-        std::vector<C> out; out.reserve(src.size());
-        for (const auto& s : src) {
-            C denom = C(1.0, 0.0) - s;
-            if (std::abs(denom) == 0.0)
-                throw std::invalid_argument("zin: S11 = 1 leads to division by zero");
-            out.push_back(z0 * (C(1.0, 0.0) + s) / denom);
-        }
-        auto r = copy();
-        Column nc = make_column<C>(out); nc.quantity = cc.quantity;
-        r->columns_[ln] = std::move(nc);
-        return r;
-    }
+    // (math_abs, math_mag, math_real, math_imag, math_phase, math_dB, math_dBm,
+    //  math_wtodBm, math_sqr, math_sqrt, math_exp, math_ln, math_log10, math_conj,
+    //  math_zin -- all moved to df_ops.hpp / src/df_ops_builtins.cpp as free functions in namespace exprdf)
 
     // max / min: reduce the last independent dimension.
     //   If index_dims_ is non-empty, groups rows by the outer (all but last) index dims,
@@ -2359,210 +2176,6 @@ public:
     std::shared_ptr<DataFrame> min() const { return reduce_last_dim(false); }
 
 private:
-    // --- C++11 arithmetic function objects (replaces C++14 generic lambdas) ---
-    struct Arith_Add  { template<typename T> T operator()(T a, T b) const { return a + b; } };
-    struct Arith_Sub  { template<typename T> T operator()(T a, T b) const { return a - b; } };
-    struct Arith_Mul  { template<typename T> T operator()(T a, T b) const { return a * b; } };
-    struct Arith_Div  { template<typename T> T operator()(T a, T b) const { return a / b; } };
-    struct Arith_SubR { template<typename T> T operator()(T a, T b) const { return b - a; } }; // s - df
-    struct Arith_DivR { template<typename T> T operator()(T a, T b) const { return b / a; } }; // s / df
-
-    // --- Unary math helpers ---
-
-    // unary_to_double: always returns a double column.
-    //   int/double use fn_d (int is implicitly widened), complex uses fn_c.
-    std::shared_ptr<DataFrame> unary_to_double(
-        std::function<double(double)> fn_d,
-        std::function<double(const std::complex<double>&)> fn_c) const
-    {
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        std::vector<double> out; out.reserve(cc.size());
-        switch (cc.tag) {
-            case DType::Int:    for (auto x : cc.as<int>())    out.push_back(fn_d(x)); break;
-            case DType::Double: for (auto x : cc.as<double>()) out.push_back(fn_d(x)); break;
-            case DType::Complex:
-                for (const auto& z : cc.as<std::complex<double>>()) out.push_back(fn_c(z)); break;
-            case DType::String:
-                throw std::invalid_argument("unary math: string columns not supported");
-        }
-        auto r = copy();
-        Column nc = make_column<double>(out); nc.quantity = cc.quantity;
-        r->columns_[ln] = std::move(nc);
-        return r;
-    }
-
-    // unary_promote: int->double, double->double, complex->complex.
-    std::shared_ptr<DataFrame> unary_promote(
-        std::function<double(double)> fn_d,
-        std::function<std::complex<double>(const std::complex<double>&)> fn_c) const
-    {
-        using C = std::complex<double>;
-        if (col_order_.empty()) throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        auto r = copy();
-        switch (cc.tag) {
-            case DType::Int: {
-                std::vector<double> out; out.reserve(cc.size());
-                for (auto x : cc.as<int>()) out.push_back(fn_d(x));
-                Column nc = make_column<double>(out); nc.quantity = cc.quantity;
-                r->columns_[ln] = std::move(nc); break;
-            }
-            case DType::Double:
-                for (auto& x : r->get_col(ln).as<double>()) x = fn_d(x); break;
-            case DType::Complex:
-                for (auto& z : r->get_col(ln).as<C>()) z = fn_c(z); break;
-            case DType::String:
-                throw std::invalid_argument("unary math: string columns not supported");
-        }
-        return r;
-    }
-
-    // --- Arithmetic helpers ---
-
-    // Numeric type promotion rank: Int(0) < Double(1) < Complex(2); String is rejected.
-    static int numeric_rank(DType t) {
-        switch (t) {
-            case DType::Int:     return 0;
-            case DType::Double:  return 1;
-            case DType::Complex: return 2;
-            default:             return -1; // String
-        }
-    }
-
-    // Widen a numeric column to std::vector<double>; rejects String/Complex columns.
-    static std::vector<double> to_double_vec(const Column& col) {
-        if (col.tag == DType::Int) {
-            const auto& src = col.as<int>();
-            return std::vector<double>(src.begin(), src.end());
-        }
-        if (col.tag == DType::Double) return col.as<double>();
-        throw std::invalid_argument(
-            "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to double");
-    }
-
-    // Widen a numeric column to std::vector<complex<double>>; rejects String.
-    static std::vector<std::complex<double>> to_complex_vec(const Column& col) {
-        using C = std::complex<double>;
-        if (col.tag == DType::Int) {
-            const auto& src = col.as<int>();
-            std::vector<C> v; v.reserve(src.size());
-            for (auto x : src) v.emplace_back(static_cast<double>(x), 0.0);
-            return v;
-        }
-        if (col.tag == DType::Double) {
-            const auto& src = col.as<double>();
-            std::vector<C> v; v.reserve(src.size());
-            for (auto x : src) v.emplace_back(x, 0.0);
-            return v;
-        }
-        if (col.tag == DType::Complex) return col.as<C>();
-        throw std::invalid_argument(
-            "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to complex");
-    }
-
-    // Replace the last column of a DataFrame copy with a new column of possibly different type.
-    void replace_last_column(const std::string& name, Column new_col) {
-        new_col.quantity = get_col(name).quantity;
-        columns_[name] = std::move(new_col);
-    }
-
-    // Apply element-wise binary op between last column of *this and last column of o.
-    // Supports numeric type promotion: int op double -> double, * op complex -> complex.
-    // String columns are always rejected.
-    template<typename Op>
-    std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& o, Op op) const {
-        if (col_order_.empty())
-            throw std::invalid_argument("DataFrame has no columns");
-        if (o.col_order_.empty())
-            throw std::invalid_argument("Other DataFrame has no columns");
-        if (num_rows() != o.num_rows())
-            throw std::invalid_argument(
-                "Row count mismatch: " + std::to_string(num_rows()) +
-                " vs " + std::to_string(o.num_rows()));
-        const std::string& ln = col_order_.back();
-        const Column& ca = get_col(ln);
-        const Column& cb = o.get_col(o.col_order_.back());
-
-        int ra = numeric_rank(ca.tag), rb = numeric_rank(cb.tag);
-        if (ra < 0 || rb < 0)
-            throw std::invalid_argument("Arithmetic on string columns is not supported");
-
-        // Determine the promoted result type
-        DType rt = (ra >= rb) ? ca.tag : cb.tag;
-
-        auto result = copy();
-
-        if (rt == DType::Int) {
-            // Both must be int (rank 0 == 0)
-            auto& va = result->get_col(ln).as<int>();
-            const auto& vb = cb.as<int>();
-            for (std::size_t i = 0; i < va.size(); ++i) va[i] = op(va[i], vb[i]);
-        } else if (rt == DType::Double) {
-            std::vector<double> va = to_double_vec(ca);
-            std::vector<double> vb = to_double_vec(cb);
-            std::vector<double> vc(va.size());
-            for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
-            Column nc = make_column<double>(vc);
-            nc.quantity = ca.quantity;
-            result->columns_[ln] = std::move(nc);
-        } else { // Complex
-            using C = std::complex<double>;
-            std::vector<C> va = to_complex_vec(ca);
-            std::vector<C> vb = to_complex_vec(cb);
-            std::vector<C> vc(va.size());
-            for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
-            Column nc = make_column<C>(vc);
-            nc.quantity = ca.quantity;
-            result->columns_[ln] = std::move(nc);
-        }
-        return result;
-    }
-
-    // Apply element-wise scalar op on last column.
-    // Type promotion rules (scalar is always double):
-    //   int    -> result is double (scalar promotes int column to double)
-    //   double -> result is double
-    //   complex-> result is complex (scalar is widened to complex(s, 0))
-    //   string -> throws
-    template<typename Op>
-    std::shared_ptr<DataFrame> apply_scalar_op_last(double s, Op op) const {
-        if (col_order_.empty())
-            throw std::invalid_argument("DataFrame has no columns");
-        const std::string& ln = col_order_.back();
-        const Column& cc = get_col(ln);
-        auto result = copy();
-        switch (cc.tag) {
-            case DType::Int: {
-                // Promote int -> double
-                const auto& src = cc.as<int>();
-                std::vector<double> vc(src.size());
-                for (std::size_t i = 0; i < src.size(); ++i)
-                    vc[i] = op(static_cast<double>(src[i]), s);
-                Column nc = make_column<double>(vc);
-                nc.quantity = cc.quantity;
-                result->columns_[ln] = std::move(nc);
-                break;
-            }
-            case DType::Double: {
-                auto& ra = result->get_col(ln).as<double>();
-                for (auto& v : ra) v = op(v, s);
-                break;
-            }
-            case DType::Complex: {
-                auto& ra = result->get_col(ln).as<std::complex<double>>();
-                for (auto& v : ra) v = op(v, std::complex<double>(s, 0.0));
-                break;
-            }
-            case DType::String:
-                throw std::invalid_argument(
-                    "Arithmetic on string columns is not supported");
-        }
-        return result;
-    }
-
     // reduce_last_dim: implementation of max / min.
     // The last column (dep, or the last index col when all-index) is reduced to one value
     // per outer group.  Groups are read directly from the index structure - no key hashing.
@@ -2859,40 +2472,12 @@ private:
     }
 };
  
-// ============================================================
-// Free function wrappers for unary math operations.
-// Usage: exprdf::abs(df), exprdf::dB(df), etc.
-// Each accepts const DataFrame& or shared_ptr<DataFrame>.
-// ============================================================
-inline std::shared_ptr<DataFrame> abs   (const DataFrame& df) { return df.math_abs();    }
-inline std::shared_ptr<DataFrame> mag   (const DataFrame& df) { return df.math_mag();    }
-inline std::shared_ptr<DataFrame> real  (const DataFrame& df) { return df.math_real();   }
-inline std::shared_ptr<DataFrame> imag  (const DataFrame& df) { return df.math_imag();   }
-inline std::shared_ptr<DataFrame> phase (const DataFrame& df) { return df.math_phase();  }
-inline std::shared_ptr<DataFrame> dB    (const DataFrame& df) { return df.math_dB();     }
-inline std::shared_ptr<DataFrame> dBm   (const DataFrame& df) { return df.math_dBm();    }
-inline std::shared_ptr<DataFrame> wtodBm(const DataFrame& df) { return df.math_wtodBm(); }
-inline std::shared_ptr<DataFrame> sqr   (const DataFrame& df) { return df.math_sqr();    }
-inline std::shared_ptr<DataFrame> sqrt  (const DataFrame& df) { return df.math_sqrt();   }
-inline std::shared_ptr<DataFrame> exp   (const DataFrame& df) { return df.math_exp();    }
-inline std::shared_ptr<DataFrame> ln    (const DataFrame& df) { return df.math_ln();     }
-inline std::shared_ptr<DataFrame> log10 (const DataFrame& df) { return df.math_log10();  }
-
-// shared_ptr overloads
-inline std::shared_ptr<DataFrame> abs   (std::shared_ptr<const DataFrame> df) { return df->math_abs();    }
-inline std::shared_ptr<DataFrame> mag   (std::shared_ptr<const DataFrame> df) { return df->math_mag();    }
-inline std::shared_ptr<DataFrame> real  (std::shared_ptr<const DataFrame> df) { return df->math_real();   }
-inline std::shared_ptr<DataFrame> imag  (std::shared_ptr<const DataFrame> df) { return df->math_imag();   }
-inline std::shared_ptr<DataFrame> phase (std::shared_ptr<const DataFrame> df) { return df->math_phase();  }
-inline std::shared_ptr<DataFrame> dB    (std::shared_ptr<const DataFrame> df) { return df->math_dB();     }
-inline std::shared_ptr<DataFrame> dBm   (std::shared_ptr<const DataFrame> df) { return df->math_dBm();    }
-inline std::shared_ptr<DataFrame> wtodBm(std::shared_ptr<const DataFrame> df) { return df->math_wtodBm(); }
-inline std::shared_ptr<DataFrame> sqr   (std::shared_ptr<const DataFrame> df) { return df->math_sqr();    }
-inline std::shared_ptr<DataFrame> sqrt  (std::shared_ptr<const DataFrame> df) { return df->math_sqrt();   }
-inline std::shared_ptr<DataFrame> exp   (std::shared_ptr<const DataFrame> df) { return df->math_exp();    }
-inline std::shared_ptr<DataFrame> ln    (std::shared_ptr<const DataFrame> df) { return df->math_ln();     }
-inline std::shared_ptr<DataFrame> log10 (std::shared_ptr<const DataFrame> df) { return df->math_log10();  }
-
 } // namespace exprdf
+
+// Pull in arithmetic operators, registry-based operations, and free-function
+// shortcuts (abs, dB, sqrt, conj, zin, etc.).  The include is at the bottom to
+// avoid a circular dependency: df_ops.hpp includes this file,
+// and the guard prevents re-entry.
+#include <exprdf/df_ops.hpp>
 
 #endif // EXPRDF_HPP

@@ -2,7 +2,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
-#include <exprdf/exprdf.hpp>
+#include <exprdf/df_ops.hpp>
 
 namespace py = pybind11;
 
@@ -1046,13 +1046,13 @@ PYBIND11_MODULE(exprdf, m) {
             return -self;
         }, "Negate all elements of last column (-df)")
         // conj / max / min / zin as methods
-        .def("conj", &exprdf::DataFrame::math_conj,
+        .def("conj", [](const exprdf::DataFrame& self) { return exprdf::apply_fn("conj", self); },
              "Complex conjugate of last col; identity for real types")
         .def("max",  &exprdf::DataFrame::max,
              "Reduce last independent dim by taking max of last col")
         .def("min",  &exprdf::DataFrame::min,
              "Reduce last independent dim by taking min of last col")
-        .def("zin",  &exprdf::DataFrame::math_zin,
+        .def("zin",  [](const exprdf::DataFrame& self, std::complex<double> z0) { return exprdf::zin(self, z0); },
              py::arg("z0") = std::complex<double>(50.0, 0.0),
              "Zin = Z0*(1+S11)/(1-S11) on last col; default Z0=50");
 
@@ -1064,30 +1064,26 @@ PYBIND11_MODULE(exprdf, m) {
 
     // ----------------------------------------------------------------
     // Module-level math functions (operate on the last column)
+    // Auto-discovered from the registry -- adding a new operation to
+    // DFOpsRegistrar_() in src/df_ops_builtins.cpp is sufficient.
     // ----------------------------------------------------------------
-    m.def("abs",    [](const exprdf::DataFrame& df) { return df.math_abs();    }, py::arg("df"), "abs(df): |last col|, int→int, double→double, complex→double");
-    m.def("mag",    [](const exprdf::DataFrame& df) { return df.math_mag();    }, py::arg("df"), "mag(df): magnitude of last col (same as abs)");
-    m.def("real",   [](const exprdf::DataFrame& df) { return df.math_real();   }, py::arg("df"), "real(df): real part of last col → double");
-    m.def("imag",   [](const exprdf::DataFrame& df) { return df.math_imag();   }, py::arg("df"), "imag(df): imaginary part of last col → double");
-    m.def("phase",  [](const exprdf::DataFrame& df) { return df.math_phase();  }, py::arg("df"), "phase(df): phase angle (radians) of last col → double");
-    m.def("dB",     [](const exprdf::DataFrame& df) { return df.math_dB();     }, py::arg("df"), "dB(df): 20·log10(|last col|) → double");
-    m.def("dBm",    [](const exprdf::DataFrame& df) { return df.math_dBm();    }, py::arg("df"), "dBm(df): 10·log10(|last col|·1000) → double");
-    m.def("wtodBm", [](const exprdf::DataFrame& df) { return df.math_wtodBm(); }, py::arg("df"), "wtodBm(df): 10·log10(last col·1000), real input only → double");
-    m.def("sqr",    [](const exprdf::DataFrame& df) { return df.math_sqr();    }, py::arg("df"), "sqr(df): x² on last col, preserves type");
-    m.def("sqrt",   [](const exprdf::DataFrame& df) { return df.math_sqrt();   }, py::arg("df"), "sqrt(df): √last col, int→double, complex→complex");
-    m.def("exp",    [](const exprdf::DataFrame& df) { return df.math_exp();    }, py::arg("df"), "exp(df): e^(last col), int→double, complex→complex");
-    m.def("ln",     [](const exprdf::DataFrame& df) { return df.math_ln();     }, py::arg("df"), "ln(df): natural log of last col, int→double, complex→complex");
-    m.def("log10",  [](const exprdf::DataFrame& df) { return df.math_log10();  }, py::arg("df"), "log10(df): log₁₀ of last col, int→double, complex→complex");
+    for (const auto& entry : exprdf::unary_registry()) {
+        const std::string name = entry.first;
+        const exprdf::UnaryFn fn = entry.second;
+        m.def(name.c_str(),
+              [fn](const exprdf::DataFrame& df) { return fn(df); },
+              py::arg("df"));
+    }
 
-    // conj / max / min / zin — module-level functions
-    m.def("conj",   [](const exprdf::DataFrame& df) { return df.math_conj(); },
-          py::arg("df"), "conj(df): complex conjugate of last col; identity for real");
-    m.def("max",    [](const exprdf::DataFrame& df) { return df.max(); },
+    // Special cases not in the unary registry (need extra parameters or stay on DataFrame):
+    m.def("max",
+          [](const exprdf::DataFrame& df) { return df.max(); },
           py::arg("df"), "max(df): reduce last independent dim by max of last col");
-    m.def("min",    [](const exprdf::DataFrame& df) { return df.min(); },
+    m.def("min",
+          [](const exprdf::DataFrame& df) { return df.min(); },
           py::arg("df"), "min(df): reduce last independent dim by min of last col");
     m.def("zin",
-          [](const exprdf::DataFrame& df, std::complex<double> z0) { return df.math_zin(z0); },
+          [](const exprdf::DataFrame& df, std::complex<double> z0) { return exprdf::zin(df, z0); },
           py::arg("df"), py::arg("z0") = std::complex<double>(50.0, 0.0),
           "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last col");
 }

@@ -12,12 +12,21 @@ find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
 add_library(dataframe INTERFACE)
 target_include_directories(dataframe INTERFACE ${CMAKE_SOURCE_DIR}/include)
 
+# df_ops: built-in registry registrations. OBJECT library guarantees static
+# initializers (DFOpsRegistrar_) are always linked and executed.
+add_library(df_ops OBJECT src/df_ops.cpp)
+target_include_directories(df_ops PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
+# df_ops_builtins: non-registry operations (zin, ...) with extra parameters.
+add_library(df_ops_builtins OBJECT src/df_ops_builtins.cpp)
+target_include_directories(df_ops_builtins PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
 # Original executable
 add_executable(Template main.cc)
 
 # C++ DataFrame test
 add_executable(test_dataframe test_dataframe.cc)
-target_link_libraries(test_dataframe PRIVATE dataframe)
+target_link_libraries(test_dataframe PRIVATE dataframe df_ops df_ops_builtins)
 add_test(NAME test_dataframe COMMAND test_dataframe)
 
 # Python bindings (FetchContent since vcpkg pybind11 has broken dep chain)
@@ -29,7 +38,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pybind11)
 pybind11_add_module(exprdf bindings/py_exprdf.cpp)
-target_link_libraries(exprdf PRIVATE dataframe)
+target_link_libraries(exprdf PRIVATE dataframe df_ops df_ops_builtins)
 
 add_test(
     NAME test_pybind

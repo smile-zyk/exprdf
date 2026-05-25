@@ -268,6 +268,22 @@ int main() {
     }
     std::cout << "PASSED" << std::endl;
 
+    // === Test 13b: Multi-index — add_uniform_index allows duplicate levels ===
+    std::cout << "\n=== Test 13b: add_uniform_index duplicate levels ===" << std::endl;
+    {
+        DataFrame mi;
+        mi.add_uniform_index<int>("a", {1, 1, 2});
+        mi.add_uniform_index<int>("b", {10, 20});
+        assert(mi.num_rows() == 6);
+        auto a = mi.get_column_as<int>("a");
+        auto b = mi.get_column_as<int>("b");
+        assert((a == std::vector<int>{1, 1, 1, 1, 2, 2}));
+        assert((b == std::vector<int>{10, 20, 10, 20, 10, 20}));
+        for (std::size_t r = 0; r < mi.num_rows(); ++r)
+            assert(mi.flat_index(mi.multi_index(r)) == r);
+    }
+    std::cout << "PASSED" << std::endl;
+
     // === Test 14: Multi-index — strides & flat_index ===
     std::cout << "\n=== Test 14: strides & flat_index ===" << std::endl;
     {
@@ -459,7 +475,8 @@ int main() {
     // === Test 22: set_index — validation errors ===
     std::cout << "\n=== Test 22: set_index validation ===" << std::endl;
     {
-        // a=[1,1,1,2], b=[10,20,30,10]: a=1 has 3 b-values, a=2 has 1 → ragged → throws
+        // a=[1,1,1,2], b=[10,20,30,10]: b has different run counts in each a-group
+        // (3 vs 1) → ragged → set_index should throw.
         DataFrame df;
         df.add_column<int>("a", {1, 1, 1, 2});
         df.add_column<int>("b", {10, 20, 30, 10});
@@ -469,7 +486,8 @@ int main() {
         catch (const std::invalid_argument&) { caught1 = true; }
         assert(caught1);
 
-        // a=[1,1,2,2,3] (group sizes 2,2,1), b=[10,20,10,20,10]: ragged → throws
+        // a=[1,1,2,2,3] (group sizes 2,2,1), b=[10,20,10,20,10]:
+        // different run counts across a-groups (2 vs 2 vs 1) → ragged → throws.
         DataFrame df2;
         df2.add_column<int>("a", {1, 1, 2, 2, 3});
         df2.add_column<int>("b", {10, 20, 10, 20, 10});
@@ -547,6 +565,18 @@ int main() {
         assert(sub->num_rows() == 2);
         assert(sub->at<double>("z", 0) == 1.0);
         assert(sub->at<double>("z", 1) == 3.0);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 25b: set_index single-column repeated values rejected ===
+    std::cout << "\n=== Test 25b: set_index single-column repeated values ===" << std::endl;
+    {
+        DataFrame df;
+        df.add_column<int>("a", {1, 1, 2});
+        bool caught = false;
+        try { df.set_index({"a"}); }
+        catch (const std::invalid_argument&) { caught = true; }
+        assert(caught);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -715,6 +745,22 @@ int main() {
         assert(s2->num_columns() == 1);
         assert(s2->num_rows() == 2);
         assert(s2->num_indices() == 1);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // === Test 32b: sub — independent column with ragged inner ===
+    std::cout << "\n=== Test 32b: sub independent with ragged inner ==" << std::endl;
+    {
+        DataFrame df;
+        df.add_uniform_index<int>("level", {0, 1});
+        df.add_grouped_index_groups<int>("number", {{0, 1, 2}, {0, 1}});
+
+        auto s = df.sub("level");
+        assert(s->num_rows() == 2);
+        assert(s->num_indices() == 1);
+        assert(s->has_column("level"));
+        auto lv = s->get_column_as<int>("level");
+        assert((lv == std::vector<int>{0, 1}));
     }
     std::cout << "PASSED" << std::endl;
 
@@ -961,11 +1007,11 @@ int main() {
     // === Test 44: add_grouped_index validation ===
     std::cout << "\n=== Test 44: add_grouped_index validation ===" << std::endl;
     {
-        // First index cannot be varying
-        bool caught = false;
+        // First index cannot be grouped
+        caught = false;
         try {
             DataFrame first;
-            first.add_grouped_index<double>("freq", {1.0, 2.0}, 2);
+            first.add_grouped_index<double>("freq", {1.0, 2.0, 3.0, 1.5, 2.5, 3.5}, 3);
         } catch (const std::invalid_argument&) { caught = true; }
         assert(caught);
 
@@ -1051,7 +1097,7 @@ int main() {
         auto d2 = df.get_index_dim("port");
         assert(d0.is_uniform() && d0.level_count() == 2);
         assert(d1.is_grouped() && d1.is_regular_grouped());
-        assert(d1.group_lengths.size() == 6 && d1.group_lengths[0] == 2);
+        assert(d1.group_lengths.size() == 2 && d1.group_lengths[0] == 3);
         assert(d2.is_uniform() && d2.level_count() == 2);
     }
     std::cout << "PASSED" << std::endl;
@@ -1088,7 +1134,7 @@ int main() {
         auto d2 = df.get_index_dim("port");
         assert(d0.is_uniform() && d0.level_count() == 2);
         assert(d1.is_grouped() && d1.is_regular_grouped());
-        assert(d1.group_lengths.size() == 4 && d1.group_lengths[0] == 2);
+        assert(d1.group_lengths.size() == 2 && d1.group_lengths[0] == 2);
         assert(d2.is_uniform() && d2.level_count() == 2);
     }
     std::cout << "PASSED" << std::endl;
@@ -1114,10 +1160,12 @@ int main() {
     std::cout << "PASSED" << std::endl;
 
     // === Test 52: set_index infer fails on non-constant blocks ===
-    std::cout << "\n=== Test 52: set_index invalid mixed blocks ===" << std::endl;
+    std::cout << "\n=== Test 52: set_index non-constant blocks → throw ===" << std::endl;
     {
         DataFrame df;
-        // freq run lengths are inconsistent (2 then 1 then 1), not a valid grouped layout.
+        // bias=[1,1,2,2] → Uniform(2 levels), cur_groups=[(0,2),(2,2)].
+        // freq=[10,10,20,10]: group0 has 1 run of 2; group1 has 2 runs of 1
+        // → different run counts → ragged → throws.
         df.add_column<int>("bias", {1,1,2,2});
         df.add_column<int>("freq", {10,10,20,10});
         df.add_column<double>("v", {1,2,3,4});
@@ -1141,7 +1189,7 @@ int main() {
         df.set_index({"bias", "freq", "port"});
         auto d1 = df.get_index_dim("freq");
         assert(d1.is_grouped() && d1.is_regular_grouped());
-        assert(d1.group_lengths.size() == 6 && d1.group_lengths[0] == 2);
+        assert(d1.group_lengths.size() == 2 && d1.group_lengths[0] == 3);
     }
     std::cout << "PASSED" << std::endl;
 
@@ -2405,6 +2453,117 @@ int main() {
             assert(reg.size() >= expected.size());
         }
         std::cout << "  registry iteration: ok" << std::endl;
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // ----------------------------------------------------------------
+    // Test G1: grouped index cannot be the first dimension
+    // ----------------------------------------------------------------
+    std::cout << "\n=== Test G1: grouped first-dim rejected ===" << std::flush;
+    {
+        bool threw = false;
+        try {
+            DataFrame df;
+            df.add_grouped_index<int>("g", {1, 1, 2, 2}, 2);
+        } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+
+        threw = false;
+        try {
+            DataFrame df;
+            df.add_grouped_index_groups<int>("g", {{1, 2, 3}, {4, 5}});
+        } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
+    }
+    std::cout << "PASSED" << std::endl;
+
+    // Test G7: all-index DataFrame loc keeps the last column
+    std::cout << "\nTest G7: all-index DataFrame loc...";
+    {
+        // Case A: 2-dim all-index, both dims selected -> keep last column
+        {
+            DataFrame df;
+            df.add_column<int>("a", {1, 1, 2, 2});
+            df.add_column<int>("b", {10, 20, 10, 20});
+            df.set_index({"a", "b"});
+            auto r = df.loc({1, 0});  // a-idx=1(a=2), b-idx=0(b=10) → row 2
+            assert(r->num_rows() == 1);
+            assert(r->num_columns() == 1);
+            assert(r->num_indices() == 0);
+            assert(r->has_column("b"));
+            assert(r->at<int>("b", 0) == 10);
+        }
+
+        // Case B: 2-dim all-index, wildcard on first dim
+        {
+            DataFrame df;
+            df.add_column<int>("a", {1, 1, 2, 2});
+            df.add_column<int>("b", {10, 20, 10, 20});
+            df.set_index({"a", "b"});
+            auto r = df.loc({-1, 1});  // b=20 rows [1,3]: a=[1,2], b=[20,20]
+            assert(r->num_rows() == 2);
+            assert(r->at<int>("a", 0) == 1 && r->at<int>("a", 1) == 2);
+            assert(r->has_column("b"));
+            assert(r->at<int>("b", 0) == 20 && r->at<int>("b", 1) == 20);
+        }
+
+        // Case C: 1-dim all-index, loc({1}) keeps the only/last column
+        {
+            DataFrame df;
+            df.add_column<int>("a", {5, 3, 1, 4, 2});
+            df.set_index({"a"});  // no repeats → Uniform(5)
+            auto r = df.loc({1}); // idx=1 → level-value 3, row 1
+            assert(r->num_rows() == 1);
+            assert(r->num_columns() == 1);
+            assert(r->num_indices() == 0);
+            assert(r->has_column("a"));
+            assert(r->at<int>("a", 0) == 3);
+        }
+
+        // Case D: mixed DataFrame (has extra data col) — existing behavior unchanged
+        {
+            DataFrame df;
+            df.add_column<int>("a", {1, 1, 2, 2});
+            df.add_column<int>("b", {10, 20, 10, 20});
+            df.add_column<double>("val", {1.0, 2.0, 3.0, 4.0});
+            df.set_index({"a", "b"});
+            auto r = df.loc({1, 0});
+            assert(r->num_rows() == 1);
+            assert(approx_equal(r->at<double>("val", 0), 3.0));
+            assert(!r->has_column("a") && !r->has_column("b"));
+        }
+
+        // Case E: 3-dim all-index, loc({0}) keeps unfixed outer dims and last column
+        // a=[1,1,1,1,2,2,2,2], b=[3,3,4,4,3,3,4,4], c=[5,6,5,6,5,6,5,6]
+        // → Uniform(2)×Uniform(2)×Uniform(2)
+        // loc({0}): c-idx=0(c=5), n_outer=2 → rows [0,2,4,6], columns a,b kept
+        {
+            DataFrame df;
+            df.add_column<int>("a", {1, 1, 1, 1, 2, 2, 2, 2});
+            df.add_column<int>("b", {3, 3, 4, 4, 3, 3, 4, 4});
+            df.add_column<int>("c", {5, 6, 5, 6, 5, 6, 5, 6});
+            df.set_index({"a", "b", "c"});
+            auto r = df.loc({0});  // c-idx=0 → c=5 for all outer groups
+            assert(r->num_rows() == 4);
+            assert(r->has_column("a") && r->has_column("b"));
+            assert(r->has_column("c"));
+            assert(r->at<int>("c", 0) == 5);
+        }
+
+        // Case F: 3-dim all-index, loc({1,0}) keeps outer dim a and last column c
+        // loc({1,0}): b-idx=1(b=4), c-idx=0(c=5) → rows [2,6], columns a,c
+        {
+            DataFrame df;
+            df.add_column<int>("a", {1, 1, 1, 1, 2, 2, 2, 2});
+            df.add_column<int>("b", {3, 3, 4, 4, 3, 3, 4, 4});
+            df.add_column<int>("c", {5, 6, 5, 6, 5, 6, 5, 6});
+            df.set_index({"a", "b", "c"});
+            auto r = df.loc({1, 0});  // b=4(idx1), c=5(idx0) → rows [2,6]
+            assert(r->num_rows() == 2);
+            assert(r->at<int>("a", 0) == 1 && r->at<int>("a", 1) == 2);
+            assert(!r->has_column("b") && r->has_column("c"));
+            assert(r->at<int>("c", 0) == 5 && r->at<int>("c", 1) == 5);
+        }
     }
     std::cout << "PASSED" << std::endl;
 

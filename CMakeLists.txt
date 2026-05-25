@@ -6,7 +6,17 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
-find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+option(EXPRDF_ENABLE_PYTHON "Build Python bindings and Python tests" ON)
+
+if(EXPRDF_ENABLE_PYTHON)
+    find_package(Python3 COMPONENTS Interpreter Development.Module)
+    if(NOT Python3_FOUND)
+        message(WARNING
+            "Python bindings disabled: suitable Python3 interpreter/development module was not found. "
+            "If you need bindings, set Python3_EXECUTABLE to an x64 interpreter and reconfigure."
+        )
+    endif()
+endif()
 
 # Header-only DataFrame library
 add_library(dataframe INTERFACE)
@@ -29,25 +39,27 @@ add_executable(test_dataframe test_dataframe.cc)
 target_link_libraries(test_dataframe PRIVATE dataframe df_ops df_ops_builtins)
 add_test(NAME test_dataframe COMMAND test_dataframe)
 
-# Python bindings (FetchContent since vcpkg pybind11 has broken dep chain)
-include(FetchContent)
-FetchContent_Declare(
-    pybind11
-    GIT_REPOSITORY https://github.com/pybind/pybind11.git
-    GIT_TAG        v2.11.1
-)
-FetchContent_MakeAvailable(pybind11)
-pybind11_add_module(exprdf bindings/py_exprdf.cpp)
-target_link_libraries(exprdf PRIVATE dataframe df_ops df_ops_builtins)
+if(EXPRDF_ENABLE_PYTHON AND Python3_FOUND)
+    # Python bindings (FetchContent since vcpkg pybind11 has broken dep chain)
+    include(FetchContent)
+    FetchContent_Declare(
+        pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG        v2.11.1
+    )
+    FetchContent_MakeAvailable(pybind11)
+    pybind11_add_module(exprdf bindings/py_exprdf.cpp)
+    target_link_libraries(exprdf PRIVATE dataframe df_ops df_ops_builtins)
 
-add_test(
-    NAME test_pybind
-    COMMAND
-        ${CMAKE_COMMAND} -E env
-        EXPRDF_MODULE_DIR=$<TARGET_FILE_DIR:exprdf>
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/test_pybind.py
-)
+    add_test(
+        NAME test_pybind
+        COMMAND
+            ${CMAKE_COMMAND} -E env
+            EXPRDF_MODULE_DIR=$<TARGET_FILE_DIR:exprdf>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/test_pybind.py
+    )
+endif()
 
 # Qt5 DataFrame widget library
 set(CMAKE_AUTOMOC ON)

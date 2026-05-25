@@ -246,6 +246,17 @@ assert mi.dependent_names() == ["v"]
 print(repr(mi))
 print("PASSED")
 
+print("\n=== Python Test 15b: add_uniform_index allows duplicate levels ===")
+mi_dup = pdf.DataFrame()
+mi_dup.add_uniform_index("a", [1, 1, 2])
+mi_dup.add_uniform_index("b", [10, 20])
+assert mi_dup.num_rows() == 6
+assert mi_dup.get_column("a") == [1, 1, 1, 1, 2, 2]
+assert mi_dup.get_column("b") == [10, 20, 10, 20, 10, 20]
+for r in range(mi_dup.num_rows()):
+    assert mi_dup.flat_index(mi_dup.multi_index(r)) == r
+print("PASSED")
+
 print("\n=== Python Test 16: Multi-index strides & flat_index ===")
 assert mi.strides() == [3, 1]
 assert mi.flat_index([0, 0]) == 0
@@ -407,6 +418,16 @@ assert sub.num_rows() == 2
 assert sub["v"] == [4.0, 1.0]
 print("PASSED")
 
+print("\n=== Python Test 25b: set_index single-column repeated values rejected ===")
+df_uo_single = pdf.DataFrame()
+df_uo_single.add_column("a", [1, 1, 2])
+try:
+    df_uo_single.set_index("a")
+    assert False, "Should have raised"
+except Exception:
+    pass
+print("PASSED")
+
 print("\n=== Python Test 26: set_index already sorted ===")
 df_sorted = pdf.DataFrame()
 df_sorted.add_column("a", [1, 1, 2, 2])
@@ -476,6 +497,17 @@ assert s33.type == "zparam"
 s33a = df33.sub("a")
 assert s33a.num_columns() == 1
 assert s33a.num_rows() == 2
+print("PASSED")
+
+print("\n=== Python Test 31b: sub independent with ragged inner ===")
+df33b = pdf.DataFrame()
+df33b.add_uniform_index("level", [0, 1])
+df33b.add_grouped_index_groups("number", [[0, 1, 2], [0, 1]])
+s33b = df33b.sub("level")
+assert s33b.num_rows() == 2
+assert s33b.num_indices() == 1
+assert s33b.has_column("level")
+assert s33b.get_column("level") == [0, 1]
 print("PASSED")
 
 print("\n=== Python Test 32: path/type/name metadata ===")
@@ -652,7 +684,7 @@ d0 = df_mix.get_index_dim("bias")
 d1 = df_mix.get_index_dim("freq")
 d2 = df_mix.get_index_dim("port")
 assert d0.kind == "uniform" and d0.level_count == 2
-assert d1.kind == "grouped" and len(d1.group_lengths) == 6 and d1.group_lengths[0] == 2
+assert d1.kind == "grouped" and len(d1.group_lengths) == 2 and d1.group_lengths[0] == 3
 assert d2.kind == "uniform" and d2.level_count == 2
 print("PASSED")
 
@@ -677,7 +709,7 @@ df_mix2.add_column("S", [-10,-11,-20,-21,-15,-16,-25,-26])
 df_mix2.set_index("bias", "freq", "port")
 assert df_mix2.get_index_dim("bias").kind == "uniform"
 assert df_mix2.get_index_dim("freq").kind == "grouped"
-assert len(df_mix2.get_index_dim("freq").group_lengths) == 4 and df_mix2.get_index_dim("freq").group_lengths[0] == 2
+assert len(df_mix2.get_index_dim("freq").group_lengths) == 2 and df_mix2.get_index_dim("freq").group_lengths[0] == 2
 assert df_mix2.get_index_dim("port").kind == "uniform"
 print("PASSED")
 
@@ -718,7 +750,7 @@ df_reset.add_column("S", [-10,-11,-20,-21,-30,-31,-15,-16,-25,-26,-35,-36])
 df_reset.reset_index()
 df_reset.set_index("bias", "freq", "port")
 assert df_reset.get_index_dim("freq").kind == "grouped"
-assert len(df_reset.get_index_dim("freq").group_lengths) == 6 and df_reset.get_index_dim("freq").group_lengths[0] == 2
+assert len(df_reset.get_index_dim("freq").group_lengths) == 2 and df_reset.get_index_dim("freq").group_lengths[0] == 3
 print("PASSED")
 
 # === Python Test 50: set_index with 1/3/4 columns, keep 2nd as dependent ===

@@ -855,10 +855,11 @@ public:
         std::vector<std::string> row_labels;
         std::size_t idx_col_w = 0;
         if (has_idx) {
+            const MultiIndexCtx& mi_ctx = get_mi_ctx();
             for (std::size_t r = 0; r < display_rows; ++r) {
                 std::string label;
                 if (!has_ragged_dim) {
-                    std::vector<std::size_t> mi = multi_index(r);
+                    std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
                     for (std::size_t d = 0; d < mi.size(); ++d) {
                         if (d > 0) label += ',';
                         label += std::to_string(mi[d]);
@@ -1035,6 +1036,7 @@ public:
         }
 
         index_dims_.push_back(IndexDim::create_uniform(name, levels, quantity, outer));
+        mi_ctx_valid_ = false;
     }
 
     // add_grouped_index: append a Regular Grouped dimension (equal-sized groups, flat input).
@@ -1075,6 +1077,7 @@ public:
         columns_[name] = col;
 
         index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(old_rows, group_size), quantity));
+        mi_ctx_valid_ = false;
     }
 
     // add_grouped_index_groups: append a Grouped dimension from per-group value lists.
@@ -1126,6 +1129,7 @@ public:
         columns_[name] = col;
 
         index_dims_.push_back(IndexDim::create_grouped(name, lengths, quantity));
+        mi_ctx_valid_ = false;
     }
 
     // add_grouped_index_groups overload: flat data + explicit per-group sizes.
@@ -1465,6 +1469,7 @@ public:
 
         // Set inferred/validated index dims.
         index_dims_ = new_dims;
+        mi_ctx_valid_ = false;
 
         // Reorder col_order_: index columns first, then dependent columns
         std::vector<std::string> new_order;
@@ -1489,6 +1494,7 @@ public:
     //   Column data is preserved; only the index_dims_ metadata is cleared.
     void reset_index() {
         index_dims_.clear();
+        mi_ctx_valid_ = false;
     }
 
     // --- Multi-index addressing ---
@@ -1535,122 +1541,203 @@ public:
             throw std::invalid_argument(
                 "Expected " + std::to_string(index_dims_.size()) +
                 " indices, got " + std::to_string(indices.size()));
+        return flat_index_at(indices, get_mi_ctx());
+    }
 
+    // MultiIndexCtx: precomputed tables for batch multi_index queries.
+    // Build once with build_multi_index_ctx(), then pass to multi_index_at() per row.
+    struct MultiIndexCtx {
+        bool can_use_strides = false;
+        std::vector<std::size_t> strides_vec;                  // valid when can_use_strides
+        std::vector<std::vector<std::size_t>> grouped_prefix;  // valid when !can_use_strides
+        std::vector<std::vector<std::size_t>> leaf_rows;       // valid when !can_use_strides
+        std::vector<std::size_t> group_counts;                 // valid when !can_use_strides
+    };
+
+    MultiIndexCtx build_multi_index_ctx() const {
+        MultiIndexCtx ctx;
         std::size_t n = index_dims_.size();
+        if (n == 0) return ctx;
 
-        // Fast path: all Uniform or regular Grouped AND num_rows == product of level_counts.
-        // The second check catches set_index cases where regular_grouped groups don't tile
-        // evenly across the outer uniform dimension (e.g. ragged set_index with unit groups).
-        bool can_use_strides = true;
+        ctx.can_use_strides = true;
         for (const auto& d : index_dims_)
-            if (!d.is_uniform() && !d.is_regular_grouped()) { can_use_strides = false; break; }
-        if (can_use_strides) {
+            if (!d.is_uniform() && !d.is_regular_grouped()) { ctx.can_use_strides = false; break; }
+        if (ctx.can_use_strides) {
             std::size_t expected = 1;
             for (const auto& d : index_dims_) expected *= d.level_count();
-            if (expected != num_rows()) can_use_strides = false;
+            if (expected != num_rows()) ctx.can_use_strides = false;
         }
-        if (can_use_strides) {
-            auto s = strides();
-            std::size_t row = 0;
-            for (std::size_t i = 0; i < n; ++i) {
-                if (indices[i] >= index_dims_[i].level_count())
-                    throw std::out_of_range(
-                        "Index " + std::to_string(indices[i]) +
-                        " out of range for dimension '" + index_dims_[i].name + "'");
-                row += indices[i] * s[i];
-            }
-            return row;
+        if (ctx.can_use_strides) {
+            ctx.strides_vec = strides();
+            return ctx;
         }
 
-        // General metadata path: support ragged layouts by using per-child subtree sizes.
-        std::vector<std::size_t> group_counts(n + 1, 0);
-        std::vector<std::vector<std::size_t>> grouped_prefix(n);
-        group_counts[0] = 1;
+        // General metadata path: precompute group_counts, grouped_prefix, leaf_rows.
+        ctx.group_counts.assign(n + 1, 0);
+        ctx.grouped_prefix.resize(n);
+        ctx.group_counts[0] = 1;
         for (std::size_t d = 0; d < n; ++d) {
             const IndexDim& dim = index_dims_[d];
-            std::size_t ng = group_counts[d];
+            std::size_t ng = ctx.group_counts[d];
             if (dim.is_uniform()) {
                 std::size_t lv = dim.levels.size();
                 if (lv == 0)
                     throw std::invalid_argument(
                         "Uniform dimension '" + dim.name + "' has zero levels");
-                group_counts[d + 1] = ng * lv;
+                ctx.group_counts[d + 1] = ng * lv;
             } else {
                 if (dim.group_lengths.size() != ng)
                     throw std::invalid_argument(
                         "Metadata/layout mismatch at grouped dimension '" + dim.name + "'");
-                grouped_prefix[d].assign(ng + 1, 0);
+                ctx.grouped_prefix[d].assign(ng + 1, 0);
                 for (std::size_t g = 0; g < ng; ++g) {
                     if (dim.group_lengths[g] == 0)
                         throw std::invalid_argument(
                             "Grouped dimension '" + dim.name + "' contains zero-length group");
-                    grouped_prefix[d][g + 1] = grouped_prefix[d][g] + dim.group_lengths[g];
+                    ctx.grouped_prefix[d][g + 1] = ctx.grouped_prefix[d][g] + dim.group_lengths[g];
                 }
-                group_counts[d + 1] = grouped_prefix[d][ng];
+                ctx.group_counts[d + 1] = ctx.grouped_prefix[d][ng];
             }
         }
 
-        std::vector<std::vector<std::size_t>> leaf_rows(n + 1);
-        leaf_rows[n].assign(group_counts[n], 1);
+        ctx.leaf_rows.resize(n + 1);
+        ctx.leaf_rows[n].assign(ctx.group_counts[n], 1);
         for (std::size_t d = n; d-- > 0;) {
             const IndexDim& dim = index_dims_[d];
-            std::size_t ng = group_counts[d];
-            leaf_rows[d].assign(ng, 0);
-
+            std::size_t ng = ctx.group_counts[d];
+            ctx.leaf_rows[d].assign(ng, 0);
             if (dim.is_uniform()) {
                 std::size_t lv = dim.levels.size();
                 for (std::size_t g = 0; g < ng; ++g) {
                     std::size_t base = g * lv;
                     std::size_t sum = 0;
                     for (std::size_t j = 0; j < lv; ++j)
-                        sum += leaf_rows[d + 1][base + j];
-                    leaf_rows[d][g] = sum;
+                        sum += ctx.leaf_rows[d + 1][base + j];
+                    ctx.leaf_rows[d][g] = sum;
                 }
             } else {
-                const std::vector<std::size_t>& pref = grouped_prefix[d];
+                const std::vector<std::size_t>& pref = ctx.grouped_prefix[d];
                 for (std::size_t g = 0; g < ng; ++g) {
                     std::size_t sum = 0;
                     for (std::size_t j = pref[g]; j < pref[g + 1]; ++j)
-                        sum += leaf_rows[d + 1][j];
-                    leaf_rows[d][g] = sum;
+                        sum += ctx.leaf_rows[d + 1][j];
+                    ctx.leaf_rows[d][g] = sum;
                 }
             }
         }
 
-        if (leaf_rows[0].empty() || leaf_rows[0][0] != num_rows())
-            throw std::invalid_argument("Metadata/layout mismatch in flat_index");
+        if (ctx.leaf_rows[0].empty() || ctx.leaf_rows[0][0] != num_rows())
+            throw std::invalid_argument("Metadata/layout mismatch in multi_index");
+
+        return ctx;
+    }
+
+    // get_mi_ctx: lazy accessor for the cached MultiIndexCtx.
+    // The cache is invalidated (mi_ctx_valid_ = false) whenever index_dims_ changes.
+    const MultiIndexCtx& get_mi_ctx() const {
+        if (!mi_ctx_valid_) {
+            mi_ctx_cache_ = build_multi_index_ctx();
+            mi_ctx_valid_ = true;
+        }
+        return mi_ctx_cache_;
+    }
+
+    // multi_index_at: per-row lookup using a precomputed MultiIndexCtx.
+    std::vector<std::size_t> multi_index_at(std::size_t flat, const MultiIndexCtx& ctx) const {
+        std::size_t n = index_dims_.size();
+        if (flat >= num_rows())
+            throw std::out_of_range(
+                "Flat index " + std::to_string(flat) +
+                " out of range (num_rows=" + std::to_string(num_rows()) + ")");
+
+        if (ctx.can_use_strides) {
+            std::vector<std::size_t> result(n);
+            std::size_t rem = flat;
+            for (std::size_t i = 0; i < n; ++i) {
+                result[i] = rem / ctx.strides_vec[i];
+                rem %= ctx.strides_vec[i];
+            }
+            return result;
+        }
+
+        std::vector<std::size_t> result(n);
+        std::size_t cur_start = 0;
+        std::size_t group_id = 0;
+        for (std::size_t d = 0; d < n; ++d) {
+            const IndexDim& dim = index_dims_[d];
+            std::size_t base = 0;
+            std::size_t child_count = 0;
+            if (dim.is_uniform()) {
+                child_count = dim.levels.size();
+                base = group_id * child_count;
+            } else {
+                const std::vector<std::size_t>& pref = ctx.grouped_prefix[d];
+                base = pref[group_id];
+                child_count = pref[group_id + 1] - base;
+            }
+
+            std::size_t rel = flat - cur_start;
+            std::size_t acc = 0;
+            std::size_t pos = child_count;
+            for (std::size_t j = 0; j < child_count; ++j) {
+                std::size_t sz = ctx.leaf_rows[d + 1][base + j];
+                if (rel < acc + sz) { pos = j; break; }
+                acc += sz;
+            }
+            if (pos == child_count)
+                throw std::invalid_argument(
+                    "multi_index: internal metadata traversal failed");
+
+            result[d] = pos;
+            cur_start += acc;
+            group_id = base + pos;
+        }
+        return result;
+    }
+
+    // flat_index_at: per-call forward lookup using a precomputed MultiIndexCtx.
+    std::size_t flat_index_at(const std::vector<std::size_t>& indices, const MultiIndexCtx& ctx) const {
+        std::size_t n = index_dims_.size();
+        if (ctx.can_use_strides) {
+            std::size_t row = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (indices[i] >= index_dims_[i].level_count())
+                    throw std::out_of_range(
+                        "Index " + std::to_string(indices[i]) +
+                        " out of range for dimension '" + index_dims_[i].name + "'");
+                row += indices[i] * ctx.strides_vec[i];
+            }
+            return row;
+        }
 
         std::size_t cur_start = 0;
         std::size_t group_id = 0;
         for (std::size_t d = 0; d < n; ++d) {
             const IndexDim& dim = index_dims_[d];
             std::size_t pos = indices[d];
-
             if (dim.is_uniform()) {
                 std::size_t lv = dim.levels.size();
                 if (pos >= lv)
                     throw std::out_of_range(
                         "Index " + std::to_string(pos) +
                         " out of range for dimension '" + dim.name + "'");
-
                 std::size_t base = group_id * lv;
                 std::size_t offset = 0;
                 for (std::size_t j = 0; j < pos; ++j)
-                    offset += leaf_rows[d + 1][base + j];
+                    offset += ctx.leaf_rows[d + 1][base + j];
                 cur_start += offset;
                 group_id = base + pos;
             } else {
-                const std::vector<std::size_t>& pref = grouped_prefix[d];
+                const std::vector<std::size_t>& pref = ctx.grouped_prefix[d];
                 std::size_t gsz = pref[group_id + 1] - pref[group_id];
                 if (pos >= gsz)
                     throw std::out_of_range(
                         "Index " + std::to_string(pos) +
                         " out of range for dimension '" + dim.name + "'");
-
                 std::size_t base = pref[group_id];
                 std::size_t offset = 0;
                 for (std::size_t j = 0; j < pos; ++j)
-                    offset += leaf_rows[d + 1][base + j];
+                    offset += ctx.leaf_rows[d + 1][base + j];
                 cur_start += offset;
                 group_id = base + pos;
             }
@@ -1664,126 +1751,13 @@ public:
     //     Grouped dim d : returns element ordinal within that outer group,
     //                     where the group size is group_lengths[group_id].
     std::vector<std::size_t> multi_index(std::size_t flat) const {
-        std::size_t n = index_dims_.size();
-        if (n == 0)
+        if (index_dims_.empty())
             throw std::invalid_argument("No index dimensions");
         if (flat >= num_rows())
             throw std::out_of_range(
                 "Flat index " + std::to_string(flat) +
                 " out of range (num_rows=" + std::to_string(num_rows()) + ")");
-
-        // Fast path: all Uniform or regular Grouped AND num_rows == product of level_counts.
-        bool can_use_strides = true;
-        for (const auto& d : index_dims_)
-            if (!d.is_uniform() && !d.is_regular_grouped()) { can_use_strides = false; break; }
-        if (can_use_strides) {
-            std::size_t expected = 1;
-            for (const auto& d : index_dims_) expected *= d.level_count();
-            if (expected != num_rows()) can_use_strides = false;
-        }
-        if (can_use_strides) {
-            auto s = strides();
-            std::vector<std::size_t> result(n);
-            std::size_t rem = flat;
-            for (std::size_t i = 0; i < n; ++i) {
-                result[i] = rem / s[i];
-                rem %= s[i];
-            }
-            return result;
-        }
-
-        // General metadata path: support ragged layouts by using per-child subtree sizes.
-        std::vector<std::size_t> group_counts(n + 1, 0);
-        std::vector<std::vector<std::size_t>> grouped_prefix(n);
-        group_counts[0] = 1;
-        for (std::size_t d = 0; d < n; ++d) {
-            const IndexDim& dim = index_dims_[d];
-            std::size_t ng = group_counts[d];
-            if (dim.is_uniform()) {
-                std::size_t lv = dim.levels.size();
-                if (lv == 0)
-                    throw std::invalid_argument(
-                        "Uniform dimension '" + dim.name + "' has zero levels");
-                group_counts[d + 1] = ng * lv;
-            } else {
-                if (dim.group_lengths.size() != ng)
-                    throw std::invalid_argument(
-                        "Metadata/layout mismatch at grouped dimension '" + dim.name + "'");
-                grouped_prefix[d].assign(ng + 1, 0);
-                for (std::size_t g = 0; g < ng; ++g) {
-                    if (dim.group_lengths[g] == 0)
-                        throw std::invalid_argument(
-                            "Grouped dimension '" + dim.name + "' contains zero-length group");
-                    grouped_prefix[d][g + 1] = grouped_prefix[d][g] + dim.group_lengths[g];
-                }
-                group_counts[d + 1] = grouped_prefix[d][ng];
-            }
-        }
-
-        std::vector<std::vector<std::size_t>> leaf_rows(n + 1);
-        leaf_rows[n].assign(group_counts[n], 1);
-        for (std::size_t d = n; d-- > 0;) {
-            const IndexDim& dim = index_dims_[d];
-            std::size_t ng = group_counts[d];
-            leaf_rows[d].assign(ng, 0);
-
-            if (dim.is_uniform()) {
-                std::size_t lv = dim.levels.size();
-                for (std::size_t g = 0; g < ng; ++g) {
-                    std::size_t base = g * lv;
-                    std::size_t sum = 0;
-                    for (std::size_t j = 0; j < lv; ++j)
-                        sum += leaf_rows[d + 1][base + j];
-                    leaf_rows[d][g] = sum;
-                }
-            } else {
-                const std::vector<std::size_t>& pref = grouped_prefix[d];
-                for (std::size_t g = 0; g < ng; ++g) {
-                    std::size_t sum = 0;
-                    for (std::size_t j = pref[g]; j < pref[g + 1]; ++j)
-                        sum += leaf_rows[d + 1][j];
-                    leaf_rows[d][g] = sum;
-                }
-            }
-        }
-
-        if (leaf_rows[0].empty() || leaf_rows[0][0] != num_rows())
-            throw std::invalid_argument("Metadata/layout mismatch in multi_index");
-
-        std::vector<std::size_t> result(n);
-        std::size_t cur_start = 0;
-        std::size_t group_id = 0;
-        for (std::size_t d = 0; d < n; ++d) {
-            const IndexDim& dim = index_dims_[d];
-
-            std::size_t base = 0;
-            std::size_t child_count = 0;
-            if (dim.is_uniform()) {
-                child_count = dim.levels.size();
-                base = group_id * child_count;
-            } else {
-                const std::vector<std::size_t>& pref = grouped_prefix[d];
-                base = pref[group_id];
-                child_count = pref[group_id + 1] - base;
-            }
-
-            std::size_t rel = flat - cur_start;
-            std::size_t acc = 0;
-            std::size_t pos = child_count;
-            for (std::size_t j = 0; j < child_count; ++j) {
-                std::size_t sz = leaf_rows[d + 1][base + j];
-                if (rel < acc + sz) { pos = j; break; }
-                acc += sz;
-            }
-            if (pos == child_count)
-                throw std::invalid_argument(
-                    "multi_index: internal metadata traversal failed");
-
-            result[d] = pos;
-            cur_start += acc;
-            group_id = base + pos;
-        }
-        return result;
+        return multi_index_at(flat, get_mi_ctx());
     }
 
     // --- Multi-index selection ---
@@ -1838,10 +1812,11 @@ public:
 
         // Metadata-driven filtering: keep row r iff multi_index(r) matches selectors
         // on the right-aligned inner dimensions.
+        const MultiIndexCtx& mi_ctx = get_mi_ctx();
         std::vector<std::size_t> row_indices;
         row_indices.reserve(num_rows());
         for (std::size_t r = 0; r < num_rows(); ++r) {
-            std::vector<std::size_t> mi = multi_index(r);
+            std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
             bool keep = true;
             for (std::size_t i = 0; i < k; ++i) {
                 int64_t idx = indices[i];
@@ -1924,12 +1899,13 @@ public:
             std::size_t n_outer = target_dim + 1;
             // Gather one representative row for each unique outer multi-index prefix.
             // This works for both regular and ragged inner dimensions.
+            auto& mi_ctx = get_mi_ctx();
             std::vector<std::size_t> row_indices;
             row_indices.reserve(num_rows());
             std::vector<std::size_t> prev_prefix(n_outer, 0);
             bool has_prev = false;
             for (std::size_t r = 0; r < num_rows(); ++r) {
-                std::vector<std::size_t> mi = multi_index(r);
+                std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
                 bool changed = !has_prev;
                 if (!changed) {
                     for (std::size_t i = 0; i < n_outer; ++i) {
@@ -2457,6 +2433,8 @@ private:
     std::vector<std::string> col_order_;          // column names in insertion order
     std::unordered_map<std::string, Column> columns_; // column data keyed by name
     std::vector<IndexDim> index_dims_;             // multi-index dimensions (outermost first)
+    mutable MultiIndexCtx mi_ctx_cache_;          // lazily built context for multi_index/flat_index
+    mutable bool mi_ctx_valid_ = false;           // true iff mi_ctx_cache_ reflects current index_dims_
     std::string path_;                             // source file path (metadata only)
     std::string type_;                             // data-type tag   (metadata only)
     std::string name_;                             // dataset name    (metadata only)
@@ -2534,6 +2512,7 @@ private:
                 outer_groups = std::move(next);
             }
         }
+        df.mi_ctx_valid_ = false;
     }
 
     // Internal column lookup; throws std::invalid_argument on miss.

@@ -1471,12 +1471,12 @@ assert df_b8r.conj().get_column("x") == [1.0, 2.0, 3.0]
 # zin: S11=0 → Zin=50
 df_b8z = pdf.DataFrame()
 df_b8z.add_column("S11", [complex(0,0)])
-r = df_b8z.zin(50)
+r = pdf.zin(df_b8z, 50)
 assert abs(r.get_column("S11")[0] - 50) < 1e-9
 # S11=-1 → Zin=0
 df_b8z2 = pdf.DataFrame()
 df_b8z2.add_column("S11", [complex(-1,0)])
-assert abs(df_b8z2.zin(50).get_column("S11")[0]) < 1e-9
+assert abs(pdf.zin(df_b8z2, 50).get_column("S11")[0]) < 1e-9
 
 # max/min no-index
 df_b8m = pdf.DataFrame()

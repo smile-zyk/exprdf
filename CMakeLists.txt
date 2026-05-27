@@ -5,6 +5,12 @@ project(Template LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    # /EHsc: proper C++ exception unwind semantics
+    # /utf-8: read source files as UTF-8 to avoid C4819 in mixed-language comments/strings
+    add_compile_options(/EHsc /utf-8)
+endif()
+
 include(CTest)
 option(EXPRDF_ENABLE_PYTHON "Build Python bindings and Python tests" ON)
 
@@ -22,22 +28,8 @@ endif()
 add_library(dataframe INTERFACE)
 target_include_directories(dataframe INTERFACE ${CMAKE_SOURCE_DIR}/include)
 
-# df_ops: built-in registry registrations. OBJECT library guarantees static
-# initializers (DFOpsRegistrar_) are always linked and executed.
-add_library(df_ops OBJECT src/df_ops.cpp)
-target_include_directories(df_ops PUBLIC ${CMAKE_SOURCE_DIR}/include)
-
-# df_ops_builtins: non-registry operations (zin, ...) with extra parameters.
-add_library(df_ops_builtins OBJECT src/df_ops_builtins.cpp)
-target_include_directories(df_ops_builtins PUBLIC ${CMAKE_SOURCE_DIR}/include)
-
 # Original executable
 add_executable(Template main.cc)
-
-# C++ DataFrame test
-add_executable(test_dataframe test_dataframe.cc)
-target_link_libraries(test_dataframe PRIVATE dataframe df_ops df_ops_builtins)
-add_test(NAME test_dataframe COMMAND test_dataframe)
 
 if(EXPRDF_ENABLE_PYTHON AND Python3_FOUND)
     # Python bindings (FetchContent since vcpkg pybind11 has broken dep chain)
@@ -48,8 +40,13 @@ if(EXPRDF_ENABLE_PYTHON AND Python3_FOUND)
         GIT_TAG        v2.11.1
     )
     FetchContent_MakeAvailable(pybind11)
-    pybind11_add_module(exprdf bindings/py_exprdf.cpp)
-    target_link_libraries(exprdf PRIVATE dataframe df_ops df_ops_builtins)
+    pybind11_add_module(
+        exprdf
+        bindings/py_exprdf.cpp
+        bindings/py_exprdf_bindings.cpp
+        bindings/python_ops.cpp
+    )
+    target_link_libraries(exprdf PRIVATE dataframe)
 
     add_test(
         NAME test_pybind

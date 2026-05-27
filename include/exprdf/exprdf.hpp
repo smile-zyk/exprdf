@@ -19,11 +19,8 @@
 #include <sstream>
 #include <algorithm>
 #include <memory>
-#include <cassert>
 #include <iomanip>
 #include <fstream>
-#include <functional>
-
 namespace exprdf {
 
 // ============================================================
@@ -2193,33 +2190,7 @@ public:
         return rename(col_order_.size() - 1, new_name);
     }
 
-    // --- Math functions (operate on the last column) ---
-    // Implementations in src/df_ops_builtins.cpp (registry-based).
-    // Free functions:  exprdf::abs(df), exprdf::dB(df), exprdf::apply_fn("name", df), ...
-    // Operators:       df + df, df + scalar, df * scalar, -df  (free functions in df_ops.hpp)
-    // To add a new function: see DFOpsRegistrar_() in src/df_ops_builtins.cpp.
-
-    // --- Unary math functions (operate on the last column) ---
-    // All implementations moved to math_ops_impl.hpp (registry-based).
-    //
-    //  Function | int     | double  | complex
-    //  ---------+---------+---------+------------------
-    //  abs/mag  | int     | double  | double  (|z|)
-    //  real     | double  | double  | double  (z.real())
-    //  imag     | double  | double  | double  (z.imag())
-    //  phase    | double  | double  | double  (arg(z), radians)
-    //  dB       | double  | double  | double  (20*log10|z|)
-    //  dBm      | double  | double  | double  (10*log10(|z|*1000))
-    //  wtodBm   | double  | double  | (throws; real power input only)
-    //  sqr      | int     | double  | complex (x^2)
-    //  sqrt     | double  | double  | complex
-    //  exp      | double  | double  | complex
-    //  ln       | double  | double  | complex
-    //  log10    | double  | double  | complex
-
-    // (math_abs, math_mag, math_real, math_imag, math_phase, math_dB, math_dBm,
-    //  math_wtodBm, math_sqr, math_sqrt, math_exp, math_ln, math_log10, math_conj,
-    //  math_zin -- all moved to df_ops.hpp / src/df_ops_builtins.cpp as free functions in namespace exprdf)
+    // Python-only math functions are bound in bindings/python_ops.cpp.
 
     // max / min: reduce the last independent dimension.
     //   If index_dims_ is non-empty, groups rows by the outer (all but last) index dims,
@@ -2532,11 +2503,5 @@ private:
 };
  
 } // namespace exprdf
-
-// Pull in arithmetic operators, registry-based operations, and free-function
-// shortcuts (abs, dB, sqrt, conj, zin, etc.).  The include is at the bottom to
-// avoid a circular dependency: df_ops.hpp includes this file,
-// and the guard prevents re-entry.
-#include <exprdf/df_ops.hpp>
 
 #endif // EXPRDF_HPP

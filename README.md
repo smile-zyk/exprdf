@@ -39,9 +39,6 @@ cmake --build build --config Debug
 ## Test
 
 ```bash
-# C++ tests
-./build/Debug/test_dataframe.exe
-
 # Python tests
 python test_pybind.py
 ```

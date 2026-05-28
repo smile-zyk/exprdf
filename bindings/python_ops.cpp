@@ -18,6 +18,77 @@ struct ArithSub  { template<typename T> T operator()(T a, T b) const { return a 
 struct ArithMul  { template<typename T> T operator()(T a, T b) const { return a * b; } };
 struct ArithDiv  { template<typename T> T operator()(T a, T b) const { return a / b; } };
 
+OpSpec make_op(
+    const char* name,
+    const std::vector<ArgSpec>& args,
+    std::size_t min_args,
+    std::size_t max_args,
+    py::object (*impl)(const py::args&),
+    const char* doc,
+    bool export_to_module,
+    ModuleBindMode bind_mode)
+{
+    OpSpec spec = {
+        name,
+        args,
+        min_args,
+        max_args,
+        impl,
+        doc,
+        export_to_module,
+        bind_mode
+    };
+    return spec;
+}
+
+std::vector<ArgSpec> prepend_df_arg(std::initializer_list<ArgSpec> tail_args) {
+    std::vector<ArgSpec> args;
+    args.reserve(1 + tail_args.size());
+    args.push_back(ArgSpec{ArgType::DataFrame, "df"});
+    args.insert(args.end(), tail_args.begin(), tail_args.end());
+    return args;
+}
+
+OpSpec make_internal_op(
+    const char* name,
+    std::initializer_list<ArgSpec> args,
+    std::size_t min_args,
+    std::size_t max_args,
+    py::object (*impl)(const py::args&),
+    const char* doc)
+{
+    return make_op(name, std::vector<ArgSpec>(args), min_args, max_args, impl, doc, false, ModuleBindMode::None);
+}
+
+OpSpec make_export_op_legacy(
+    const char* name,
+    std::initializer_list<ArgSpec> args,
+    std::size_t min_args,
+    std::size_t max_args,
+    py::object (*impl)(const py::args&),
+    const char* doc)
+{
+    return make_op(name, std::vector<ArgSpec>(args), min_args, max_args, impl, doc, true, ModuleBindMode::LegacyArgs);
+}
+
+OpSpec make_export_op_df_first(
+    const char* name,
+    std::initializer_list<ArgSpec> tail_args,
+    std::size_t min_args,
+    std::size_t max_args,
+    py::object (*impl)(const py::args&),
+    const char* doc)
+{
+    return make_op(name, prepend_df_arg(tail_args), min_args, max_args, impl, doc, true, ModuleBindMode::DataFrameFirstArgs);
+}
+
+template <typename T>
+bool is_array_with_dtype(py::handle value) {
+    if (!py::isinstance<py::array>(value)) return false;
+    py::array arr = py::reinterpret_borrow<py::array>(value);
+    return arr.dtype().is(py::dtype::of<T>());
+}
+
 const char* type_name(ArgType t) {
     switch (t) {
         case ArgType::DataFrame: return "DataFrame";
@@ -26,6 +97,10 @@ const char* type_name(ArgType t) {
         case ArgType::Complex: return "complex";
         case ArgType::String: return "str";
         case ArgType::Bool: return "bool";
+        case ArgType::Array: return "numpy.ndarray";
+        case ArgType::ArrayInt: return "numpy.ndarray[dtype=int]";
+        case ArgType::ArrayDouble: return "numpy.ndarray[dtype=float64]";
+        case ArgType::ArrayComplex: return "numpy.ndarray[dtype=complex128]";
         case ArgType::Any: return "any";
     }
     return "unknown";
@@ -48,15 +123,18 @@ bool accepts_arg(py::handle value, ArgType t) {
             return py::isinstance<py::str>(value);
         case ArgType::Bool:
             return py::isinstance<py::bool_>(value);
+        case ArgType::Array:
+            return py::isinstance<py::array>(value);
+        case ArgType::ArrayInt:
+            return is_array_with_dtype<int>(value);
+        case ArgType::ArrayDouble:
+            return is_array_with_dtype<double>(value);
+        case ArgType::ArrayComplex:
+            return is_array_with_dtype<DComplex>(value);
         case ArgType::Any:
             return true;
     }
     return false;
-}
-
-bool is_number_like(py::handle value) {
-    return py::isinstance<py::float_>(value) ||
-           (py::isinstance<py::int_>(value) && !py::isinstance<py::bool_>(value));
 }
 
 int numeric_rank(DType t) {
@@ -100,18 +178,15 @@ std::vector<DComplex> to_complex_vec(const Column& col) {
 
 template<typename Op>
 std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const DataFrame& other, Op op) {
-    if (self.num_columns() == 0)
-        throw std::invalid_argument("DataFrame has no columns");
-    if (other.num_columns() == 0)
-        throw std::invalid_argument("Other DataFrame has no columns");
+    self.ensure_has_columns();
+    other.ensure_has_columns("Other DataFrame");
     if (self.num_rows() != other.num_rows())
         throw std::invalid_argument(
             "Row count mismatch: " + std::to_string(self.num_rows()) +
             " vs " + std::to_string(other.num_rows()));
 
-    const std::string& ln = self.column_name(self.num_columns() - 1);
-    const Column& ca = self.get_column(ln);
-    const Column& cb = other.get_column(other.column_name(other.num_columns() - 1));
+    const Column& ca = self.last_column();
+    const Column& cb = other.last_column();
 
     int ra = numeric_rank(ca.tag);
     int rb = numeric_rank(cb.tag);
@@ -122,7 +197,7 @@ std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const Dat
     auto result = self.copy();
 
     if (rt == DType::Int) {
-        auto& va = result->get_column(ln).as<int>();
+        auto& va = result->last_column_as<int>();
         const auto& vb = cb.as<int>();
         for (std::size_t i = 0; i < va.size(); ++i) va[i] = op(va[i], vb[i]);
     } else if (rt == DType::Double) {
@@ -132,7 +207,7 @@ std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const Dat
         for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
         Column nc = make_column<double>(vc);
         nc.quantity = ca.quantity;
-        result->get_column(ln) = std::move(nc);
+        result->last_column() = std::move(nc);
     } else {
         std::vector<DComplex> va = to_complex_vec(ca);
         std::vector<DComplex> vb = to_complex_vec(cb);
@@ -140,7 +215,7 @@ std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const Dat
         for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
         Column nc = make_column<DComplex>(vc);
         nc.quantity = ca.quantity;
-        result->get_column(ln) = std::move(nc);
+        result->last_column() = std::move(nc);
     }
     return result;
 }
@@ -164,10 +239,9 @@ std::shared_ptr<DataFrame> array_to_df(const DataFrame& self, const py::array& a
             ") must be 1 (scalar) or num_rows (" + std::to_string(nrows) + ")");
     }
 
-    if (self.num_columns() == 0)
-        throw std::invalid_argument("DataFrame has no columns");
+    self.ensure_has_columns();
 
-    const std::string& cname = self.column_name(self.num_columns() - 1);
+    const std::string& cname = self.last_column_name();
     auto tmp = std::make_shared<DataFrame>();
     tmp->add_column<T>(
         cname,
@@ -176,9 +250,8 @@ std::shared_ptr<DataFrame> array_to_df(const DataFrame& self, const py::array& a
 }
 
 std::shared_ptr<DataFrame> scalar_to_df(const DataFrame& self, py::handle value, const char* op_name) {
-    if (self.num_columns() == 0)
-        throw std::invalid_argument("DataFrame has no columns");
-    const std::string& cname = self.column_name(self.num_columns() - 1);
+    self.ensure_has_columns();
+    const std::string& cname = self.last_column_name();
     const std::size_t nrows = self.num_rows();
 
     auto tmp = std::make_shared<DataFrame>();
@@ -197,7 +270,9 @@ std::shared_ptr<DataFrame> scalar_to_df(const DataFrame& self, py::handle value,
         tmp->add_column<int>(cname, std::vector<int>(nrows, i));
         return tmp;
     }
-    throw py::type_error(std::string(op_name) + " expects DataFrame, scalar number, or 1-D numpy array");
+    throw py::type_error(
+        std::string(op_name) +
+        " expects DataFrame, scalar number, or 1-D numpy array");
 }
 
 std::shared_ptr<DataFrame> coerce_to_df(const DataFrame& self, py::handle value, const char* op_name) {
@@ -213,8 +288,12 @@ std::shared_ptr<DataFrame> coerce_to_df(const DataFrame& self, py::handle value,
         if (auto a = py::array_t<int>::ensure(arr)) {
             return array_to_df<int>(self, a, op_name);
         }
-        throw py::type_error(std::string(op_name) + " only supports numeric numpy arrays");
+        throw py::type_error(
+            std::string(op_name) +
+            " only supports numeric numpy arrays with dtype int/float64/complex128, got dtype='" +
+            py::str(arr.dtype()).cast<std::string>() + "'");
     }
+
     return scalar_to_df(self, value, op_name);
 }
 
@@ -223,10 +302,8 @@ std::shared_ptr<DataFrame> unary_to_double(
     const std::function<double(double)>& fn_d,
     const std::function<double(const DComplex&)>& fn_c)
 {
-    if (self.num_columns() == 0)
-        throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = self.column_name(self.num_columns() - 1);
-    const Column& cc = self.get_column(ln);
+    self.ensure_has_columns();
+    const Column& cc = self.last_column();
     std::vector<double> out;
     out.reserve(cc.size());
     switch (cc.tag) {
@@ -242,11 +319,9 @@ std::shared_ptr<DataFrame> unary_to_double(
         case DType::String:
             throw std::invalid_argument("unary op: string columns not supported");
     }
-    auto r = self.copy();
     Column nc = make_column<double>(out);
     nc.quantity = cc.quantity;
-    r->get_column(ln) = std::move(nc);
-    return r;
+    return self.copy_with_last_column(nc);
 }
 
 std::shared_ptr<DataFrame> unary_promote(
@@ -254,10 +329,8 @@ std::shared_ptr<DataFrame> unary_promote(
     const std::function<double(double)>& fn_d,
     const std::function<DComplex(const DComplex&)>& fn_c)
 {
-    if (self.num_columns() == 0)
-        throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = self.column_name(self.num_columns() - 1);
-    const Column& cc = self.get_column(ln);
+    self.ensure_has_columns();
+    const Column& cc = self.last_column();
     auto r = self.copy();
     switch (cc.tag) {
         case DType::Int: {
@@ -266,14 +339,14 @@ std::shared_ptr<DataFrame> unary_promote(
             for (auto x : cc.as<int>()) out.push_back(fn_d(x));
             Column nc = make_column<double>(out);
             nc.quantity = cc.quantity;
-            r->get_column(ln) = std::move(nc);
+            r->last_column() = std::move(nc);
             break;
         }
         case DType::Double:
-            for (auto& x : r->get_column(ln).as<double>()) x = fn_d(x);
+            for (auto& x : r->last_column_as<double>()) x = fn_d(x);
             break;
         case DType::Complex:
-            for (auto& z : r->get_column(ln).as<DComplex>()) z = fn_c(z);
+            for (auto& z : r->last_column_as<DComplex>()) z = fn_c(z);
             break;
         case DType::String:
             throw std::invalid_argument("unary op: string columns not supported");
@@ -282,19 +355,17 @@ std::shared_ptr<DataFrame> unary_promote(
 }
 
 std::shared_ptr<DataFrame> negate_last(const DataFrame& df) {
-    if (df.num_columns() == 0)
-        throw std::invalid_argument("unary -: DataFrame has no columns");
-    const std::string& ln = df.column_name(df.num_columns() - 1);
+    df.ensure_has_columns();
     auto r = df.copy();
-    switch (df.get_column(ln).tag) {
+    switch (df.last_column().tag) {
         case DType::Int:
-            for (auto& x : r->get_column(ln).as<int>()) x = -x;
+            for (auto& x : r->last_column_as<int>()) x = -x;
             break;
         case DType::Double:
-            for (auto& x : r->get_column(ln).as<double>()) x = -x;
+            for (auto& x : r->last_column_as<double>()) x = -x;
             break;
         case DType::Complex:
-            for (auto& z : r->get_column(ln).as<DComplex>()) z = -z;
+            for (auto& z : r->last_column_as<DComplex>()) z = -z;
             break;
         case DType::String:
             throw std::invalid_argument("unary -: string columns not supported");
@@ -370,16 +441,15 @@ py::object op_neg(const py::args& args) {
 
 py::object op_abs(const py::args& args) {
     const DataFrame& df = require_df(args);
-    if (df.num_columns() == 0) throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = df.column_name(df.num_columns() - 1);
-    const Column& cc = df.get_column(ln);
+    df.ensure_has_columns();
+    const Column& cc = df.last_column();
     auto r = df.copy();
     switch (cc.tag) {
         case DType::Int:
-            for (auto& x : r->get_column(ln).as<int>()) x = std::abs(x);
+            for (auto& x : r->last_column_as<int>()) x = std::abs(x);
             break;
         case DType::Double:
-            for (auto& x : r->get_column(ln).as<double>()) x = std::abs(x);
+            for (auto& x : r->last_column_as<double>()) x = std::abs(x);
             break;
         case DType::Complex: {
             const auto& src = cc.as<DComplex>();
@@ -387,7 +457,7 @@ py::object op_abs(const py::args& args) {
             for (std::size_t i = 0; i < src.size(); ++i) out[i] = std::abs(src[i]);
             Column nc = make_column<double>(out);
             nc.quantity = cc.quantity;
-            r->get_column(ln) = std::move(nc);
+            r->last_column() = std::move(nc);
             break;
         }
         case DType::String:
@@ -440,9 +510,8 @@ py::object op_dBm(const py::args& args) {
 
 py::object op_wtodBm(const py::args& args) {
     const DataFrame& df = require_df(args);
-    if (df.num_columns() == 0) throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = df.column_name(df.num_columns() - 1);
-    const Column& cc = df.get_column(ln);
+    df.ensure_has_columns();
+    const Column& cc = df.last_column();
     std::vector<double> out;
     out.reserve(cc.size());
     switch (cc.tag) {
@@ -458,27 +527,24 @@ py::object op_wtodBm(const py::args& args) {
         case DType::String:
             throw std::invalid_argument("wtodBm: string columns not supported");
     }
-    auto r = df.copy();
     Column nc = make_column<double>(out);
     nc.quantity = cc.quantity;
-    r->get_column(ln) = std::move(nc);
-    return py::cast(r);
+    return py::cast(df.copy_with_last_column(nc));
 }
 
 py::object op_sqr(const py::args& args) {
     const DataFrame& df = require_df(args);
-    if (df.num_columns() == 0) throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = df.column_name(df.num_columns() - 1);
+    df.ensure_has_columns();
     auto r = df.copy();
-    switch (df.get_column(ln).tag) {
+    switch (df.last_column().tag) {
         case DType::Int:
-            for (auto& x : r->get_column(ln).as<int>()) x = x * x;
+            for (auto& x : r->last_column_as<int>()) x = x * x;
             break;
         case DType::Double:
-            for (auto& x : r->get_column(ln).as<double>()) x = x * x;
+            for (auto& x : r->last_column_as<double>()) x = x * x;
             break;
         case DType::Complex:
-            for (auto& z : r->get_column(ln).as<DComplex>()) z = z * z;
+            for (auto& z : r->last_column_as<DComplex>()) z = z * z;
             break;
         case DType::String:
             throw std::invalid_argument("sqr: string columns not supported");
@@ -520,16 +586,15 @@ py::object op_log10(const py::args& args) {
 
 py::object op_conj(const py::args& args) {
     const DataFrame& df = require_df(args);
-    if (df.num_columns() == 0) throw std::invalid_argument("DataFrame has no columns");
-    const std::string& ln = df.column_name(df.num_columns() - 1);
-    const Column& cc = df.get_column(ln);
+    df.ensure_has_columns();
+    const Column& cc = df.last_column();
     auto r = df.copy();
     switch (cc.tag) {
         case DType::Int:
         case DType::Double:
             break;
         case DType::Complex:
-            for (auto& z : r->get_column(ln).as<DComplex>()) z = std::conj(z);
+            for (auto& z : r->last_column_as<DComplex>()) z = std::conj(z);
             break;
         case DType::String:
             throw std::invalid_argument("conj: string columns not supported");
@@ -540,10 +605,9 @@ py::object op_conj(const py::args& args) {
 py::object op_zin(const py::args& args) {
     const DataFrame& df = require_df(args);
     const DComplex z0 = (args.size() >= 2) ? args[1].cast<DComplex>() : DComplex(50.0, 0.0);
-    if (df.num_columns() == 0) throw std::invalid_argument("zin: DataFrame has no columns");
+    df.ensure_has_columns("zin: DataFrame");
 
-    const std::string& ln = df.column_name(df.num_columns() - 1);
-    const Column& cc = df.get_column(ln);
+    const Column& cc = df.last_column();
     if (cc.tag == DType::String) {
         throw std::invalid_argument("zin: string columns not supported");
     }
@@ -559,64 +623,75 @@ py::object op_zin(const py::args& args) {
         out.push_back(z0 * (DComplex(1.0, 0.0) + src[i]) / denom);
     }
 
-    auto r = df.copy();
     Column nc = make_column<DComplex>(out);
     nc.quantity = cc.quantity;
-    r->get_column(ln) = std::move(nc);
-    return py::cast(r);
+    return py::cast(df.copy_with_last_column(nc));
 }
 
 const std::vector<OpSpec>& all_ops() {
     static const std::vector<OpSpec> specs = {
-        {"add", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_add,
-         "internal add", false},
-        {"sub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_sub,
-         "internal sub", false},
-        {"mul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_mul,
-         "internal mul", false},
-        {"truediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_truediv,
-         "internal truediv", false},
-        {"radd", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_radd,
-         "internal radd", false},
-        {"rsub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rsub,
-         "internal rsub", false},
-        {"rmul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rmul,
-         "internal rmul", false},
-        {"rtruediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rtruediv,
-         "internal rtruediv", false},
-        {"neg", {{ArgType::DataFrame, "df"}}, 1, 1, &op_neg, "internal neg", false},
-        {"abs", {{ArgType::DataFrame, "df"}}, 1, 1, &op_abs,
-         "abs(df): magnitude/absolute value on last column", true},
-        {"mag", {{ArgType::DataFrame, "df"}}, 1, 1, &op_mag,
-         "mag(df): alias of abs(df)", true},
-        {"real", {{ArgType::DataFrame, "df"}}, 1, 1, &op_real,
-         "real(df): real part on last column", true},
-        {"imag", {{ArgType::DataFrame, "df"}}, 1, 1, &op_imag,
-         "imag(df): imag part on last column", true},
-        {"phase", {{ArgType::DataFrame, "df"}}, 1, 1, &op_phase,
-         "phase(df): phase in radians on last column", true},
-        {"dB", {{ArgType::DataFrame, "df"}}, 1, 1, &op_dB,
-         "dB(df): 20*log10(|x|) on last column", true},
-        {"dBm", {{ArgType::DataFrame, "df"}}, 1, 1, &op_dBm,
-         "dBm(df): 20*log10(|x|)+10 on last column", true},
-        {"wtodBm", {{ArgType::DataFrame, "df"}}, 1, 1, &op_wtodBm,
-         "wtodBm(df): convert watt to dBm on last column", true},
-        {"sqr", {{ArgType::DataFrame, "df"}}, 1, 1, &op_sqr,
-         "sqr(df): x^2 on last column", true},
-        {"sqrt", {{ArgType::DataFrame, "df"}}, 1, 1, &op_sqrt,
-         "sqrt(df): square root on last column", true},
-        {"exp", {{ArgType::DataFrame, "df"}}, 1, 1, &op_exp,
-         "exp(df): exponential on last column", true},
-        {"ln", {{ArgType::DataFrame, "df"}}, 1, 1, &op_ln,
-         "ln(df): natural log on last column", true},
-        {"log10", {{ArgType::DataFrame, "df"}}, 1, 1, &op_log10,
-         "log10(df): base-10 log on last column", true},
-        {"conj", {{ArgType::DataFrame, "df"}}, 1, 1, &op_conj,
-         "conj(df): conjugate on last column", true},
-        {"zin", {{ArgType::DataFrame, "df"}, {ArgType::Complex, "z0"}}, 1, 2, &op_zin,
-         "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last column", true}
+        make_internal_op("add", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_add, "internal add"),
+        make_internal_op("sub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_sub, "internal sub"),
+        make_internal_op("mul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_mul, "internal mul"),
+        make_internal_op("truediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_truediv, "internal truediv"),
+        make_internal_op("radd", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_radd, "internal radd"),
+        make_internal_op("rsub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rsub, "internal rsub"),
+        make_internal_op("rmul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rmul, "internal rmul"),
+        make_internal_op("rtruediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rtruediv, "internal rtruediv"),
+        make_internal_op("neg", {{ArgType::DataFrame, "df"}}, 1, 1, &op_neg, "internal neg"),
+        make_export_op_df_first("abs", {}, 1, 1, &op_abs, "abs(df): magnitude/absolute value on last column"),
+        make_export_op_df_first("mag", {}, 1, 1, &op_mag, "mag(df): alias of abs(df)"),
+        make_export_op_df_first("real", {}, 1, 1, &op_real, "real(df): real part on last column"),
+        make_export_op_df_first("imag", {}, 1, 1, &op_imag, "imag(df): imag part on last column"),
+        make_export_op_df_first("phase", {}, 1, 1, &op_phase, "phase(df): phase in radians on last column"),
+        make_export_op_df_first("dB", {}, 1, 1, &op_dB, "dB(df): 20*log10(|x|) on last column"),
+        make_export_op_df_first("dBm", {}, 1, 1, &op_dBm, "dBm(df): 20*log10(|x|)+10 on last column"),
+        make_export_op_df_first("wtodBm", {}, 1, 1, &op_wtodBm, "wtodBm(df): convert watt to dBm on last column"),
+        make_export_op_df_first("sqr", {}, 1, 1, &op_sqr, "sqr(df): x^2 on last column"),
+        make_export_op_df_first("sqrt", {}, 1, 1, &op_sqrt, "sqrt(df): square root on last column"),
+        make_export_op_df_first("exp", {}, 1, 1, &op_exp, "exp(df): exponential on last column"),
+        make_export_op_df_first("ln", {}, 1, 1, &op_ln, "ln(df): natural log on last column"),
+        make_export_op_df_first("log10", {}, 1, 1, &op_log10, "log10(df): base-10 log on last column"),
+        make_export_op_df_first("conj", {}, 1, 1, &op_conj, "conj(df): conjugate on last column"),
+        make_export_op_df_first("zin", {{ArgType::Complex, "z0"}}, 1, 2, &op_zin, "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last column")
     };
     return specs;
+}
+
+py::object invoke_df_first(const std::string& name, const DataFrame& df, const py::args& rest) {
+    py::tuple full_args(1 + rest.size());
+    full_args[0] = py::cast(df);
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        full_args[i + 1] = py::reinterpret_borrow<py::object>(rest[i]);
+    }
+    return invoke(name, full_args);
+}
+
+void register_module_op(py::module_& m, const OpSpec& spec) {
+    if (!spec.export_to_module || spec.bind_mode == ModuleBindMode::None) return;
+
+    const std::string op_name = spec.name;
+    switch (spec.bind_mode) {
+        case ModuleBindMode::LegacyArgs:
+            m.def(
+                spec.name.c_str(),
+                [op_name](py::args args) {
+                    return invoke(op_name, py::tuple(args));
+                },
+                spec.doc);
+            break;
+        case ModuleBindMode::DataFrameFirstArgs:
+            m.def(
+                spec.name.c_str(),
+                [op_name](const exprdf::DataFrame& df, py::args args) {
+                    return invoke_df_first(op_name, df, args);
+                },
+                py::arg("df"),
+                spec.doc);
+            break;
+        case ModuleBindMode::None:
+            break;
+    }
 }
 
 const OpSpec& find_spec(const std::string& name) {
@@ -660,15 +735,7 @@ py::object invoke(const std::string& name, const py::tuple& args) {
 void bind_module_functions(py::module_& m) {
     const auto& specs = all_ops();
     for (std::size_t i = 0; i < specs.size(); ++i) {
-        const OpSpec& spec = specs[i];
-        if (!spec.export_to_module) continue;
-        const std::string op_name = spec.name;
-        m.def(
-            spec.name.c_str(),
-            [op_name](py::args args) {
-                return invoke(op_name, py::tuple(args));
-            },
-            spec.doc);
+        register_module_op(m, specs[i]);
     }
 }
 

@@ -664,6 +664,37 @@ public:
         return col_order_[index];
     }
 
+    // Common guard for operations that require at least one column.
+    void ensure_has_columns(const std::string& object_name = "DataFrame") const {
+        if (col_order_.empty()) {
+            throw std::invalid_argument(object_name + " has no columns");
+        }
+    }
+
+    // Frequently used convenience accessors for the last column.
+    const std::string& last_column_name() const {
+        ensure_has_columns();
+        return col_order_.back();
+    }
+
+    const Column& last_column() const {
+        return get_col(last_column_name());
+    }
+
+    Column& last_column() {
+        return get_col(last_column_name());
+    }
+
+    template <typename T>
+    const std::vector<T>& last_column_as() const {
+        return get_column_as<T>(last_column_name());
+    }
+
+    template <typename T>
+    std::vector<T>& last_column_as() {
+        return get_column_as<T>(last_column_name());
+    }
+
     const Column& get_column(std::size_t index) const {
         return get_col(column_name(index));
     }
@@ -1009,6 +1040,13 @@ public:
         result->type_ = type_;
         result->name_ = name_;
         result->path_ = path_;
+        return result;
+    }
+
+    // copy_with_last_column: deep-copy the DataFrame and replace the last column.
+    std::shared_ptr<DataFrame> copy_with_last_column(const Column& col) const {
+        auto result = copy();
+        result->last_column() = col;
         return result;
     }
 

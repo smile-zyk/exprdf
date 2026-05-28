@@ -17,12 +17,22 @@ enum class ArgType {
     Complex,
     String,
     Bool,
+    Array,
+    ArrayInt,
+    ArrayDouble,
+    ArrayComplex,
     Any
 };
 
 struct ArgSpec {
     ArgType type;
     const char* name;
+};
+
+enum class ModuleBindMode {
+    None,
+    LegacyArgs,
+    DataFrameFirstArgs
 };
 
 struct OpSpec {
@@ -33,6 +43,7 @@ struct OpSpec {
     py::object (*impl)(const py::args&);
     const char* doc;
     bool export_to_module;
+    ModuleBindMode bind_mode;
 };
 
 py::object invoke(const std::string& name, const py::tuple& args);

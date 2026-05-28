@@ -1660,4 +1660,29 @@ assert v[2] == complex(-3, 1)
 
 print("PASSED")
 
+# ----------------------------------------------------------------
+print("\n=== Python Test B10: list/tuple arithmetic ===")
+
+df_seq = pdf.DataFrame()
+df_seq.add_column("x", [1.0, 2.0, 3.0])
+
+threw = False
+try:
+    _ = df_seq + [10.0, 20.0, 30.0]
+except TypeError:
+    threw = True
+assert threw
+
+threw = False
+try:
+    _ = df_seq * (2.0,)
+except TypeError:
+    threw = True
+assert threw
+
+r = df_seq + np.array([10.0, 20.0, 30.0], dtype=np.float64)
+assert r.get_column("x") == [11.0, 22.0, 33.0]
+
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

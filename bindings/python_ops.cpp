@@ -3,6 +3,7 @@
 #include <exprdf/exprdf.hpp>
 #include <pybind11/numpy.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <complex>
 #include <stdexcept>
@@ -667,10 +668,19 @@ py::object invoke_df_first(const std::string& name, const DataFrame& df, const p
     return invoke(name, full_args);
 }
 
+std::string to_lower_ascii(std::string s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(s[i]);
+        s[i] = static_cast<char>(std::tolower(ch));
+    }
+    return s;
+}
+
 void register_module_op(py::module_& m, const OpSpec& spec) {
     if (!spec.export_to_module || spec.bind_mode == ModuleBindMode::None) return;
 
     const std::string op_name = spec.name;
+    const std::string lower_name = to_lower_ascii(op_name);
     switch (spec.bind_mode) {
         case ModuleBindMode::LegacyArgs:
             m.def(
@@ -679,6 +689,14 @@ void register_module_op(py::module_& m, const OpSpec& spec) {
                     return invoke(op_name, py::tuple(args));
                 },
                 spec.doc);
+            if (lower_name != op_name) {
+                m.def(
+                    lower_name.c_str(),
+                    [op_name](py::args args) {
+                        return invoke(op_name, py::tuple(args));
+                    },
+                    spec.doc);
+            }
             break;
         case ModuleBindMode::DataFrameFirstArgs:
             m.def(
@@ -688,6 +706,15 @@ void register_module_op(py::module_& m, const OpSpec& spec) {
                 },
                 py::arg("df"),
                 spec.doc);
+            if (lower_name != op_name) {
+                m.def(
+                    lower_name.c_str(),
+                    [op_name](const exprdf::DataFrame& df, py::args args) {
+                        return invoke_df_first(op_name, df, args);
+                    },
+                    py::arg("df"),
+                    spec.doc);
+            }
             break;
         case ModuleBindMode::None:
             break;

@@ -79,6 +79,9 @@ inline bool values_equal<std::complex<double>>(const std::complex<double>& a, co
 // Supported types are those with a DTypeTag<T> specialisation.
 // ============================================================
 
+template <typename T>
+struct ColumnStorage;
+
 // Type-to-string helpers (specialised for each supported type)
 template <typename T>
 inline std::string column_val_to_string(const T& v) {
@@ -117,6 +120,16 @@ struct ColumnStorageBase {
     // Append all elements from `other` into this storage.
     // Throws std::invalid_argument if `other` has a different concrete type.
     virtual void do_append(const ColumnStorageBase& other) = 0;
+
+    template <typename T>
+    const std::vector<T>& as() const {
+        return static_cast<const ColumnStorage<T>*>(this)->data;
+    }
+
+    template <typename T>
+    std::vector<T>& as() {
+        return static_cast<ColumnStorage<T>*>(this)->data;
+    }
 };
 
 // Concrete storage for a supported type T.
@@ -130,6 +143,9 @@ struct ColumnStorage : ColumnStorageBase {
     explicit ColumnStorage(const std::vector<T>& v) : data(v) {}
 
     std::size_t size() const override { return data.size(); }
+
+    const std::vector<T>& as() const { return data; }
+    std::vector<T>& as() { return data; }
 
     std::string to_string_at(std::size_t row) const override {
         return column_val_to_string<T>(data.at(row));
@@ -351,15 +367,15 @@ public:
         return c;
     }
 
-    // Typed accessors -- caller must ensure T matches tag (undefined behaviour otherwise).
+    // Typed accessors -- throws std::invalid_argument if T mismatches runtime storage type.
     // Works for any T that has a ColumnStorage<T> specialisation.
     template <typename T>
     const std::vector<T>& as() const {
-        return static_cast<const ColumnStorage<T>*>(storage_.get())->data;
+        return storage_->as<T>();
     }
     template <typename T>
     std::vector<T>& as() {
-        return static_cast<ColumnStorage<T>*>(storage_.get())->data;
+        return storage_->as<T>();
     }
 
 private:

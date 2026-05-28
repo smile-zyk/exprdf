@@ -179,16 +179,19 @@ std::vector<DComplex> to_complex_vec(const Column& col) {
 }
 
 template<typename Op>
-std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const DataFrame& other, Op op) {
-    self.ensure_has_columns();
-    other.ensure_has_columns("Other DataFrame");
-    if (self.num_rows() != other.num_rows())
+std::shared_ptr<DataFrame> apply_binary_op_last(
+    const std::shared_ptr<DataFrame>& self,
+    const std::shared_ptr<DataFrame>& other,
+    Op op) {
+    self->ensure_has_columns();
+    other->ensure_has_columns("Other DataFrame");
+    if (self->num_rows() != other->num_rows())
         throw std::invalid_argument(
-            "Row count mismatch: " + std::to_string(self.num_rows()) +
-            " vs " + std::to_string(other.num_rows()));
+            "Row count mismatch: " + std::to_string(self->num_rows()) +
+            " vs " + std::to_string(other->num_rows()));
 
-    const Column& ca = self.last_column();
-    const Column& cb = other.last_column();
+    const Column& ca = self->last_column();
+    const Column& cb = other->last_column();
 
     int ra = numeric_rank(ca.tag);
     int rb = numeric_rank(cb.tag);
@@ -196,7 +199,7 @@ std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const Dat
         throw std::invalid_argument("Arithmetic on string columns is not supported");
 
     DType rt = (ra >= rb) ? ca.tag : cb.tag;
-    auto result = self.copy();
+    auto result = self->copy();
 
     if (rt == DType::Int) {
         auto& va = result->last_column_as<int>();
@@ -223,7 +226,10 @@ std::shared_ptr<DataFrame> apply_binary_op_last(const DataFrame& self, const Dat
 }
 
 template <typename T>
-std::shared_ptr<DataFrame> array_to_df(const DataFrame& self, const py::array& arr, const char* op_name) {
+std::shared_ptr<DataFrame> array_to_df(
+    const std::shared_ptr<DataFrame>& self,
+    const py::array& arr,
+    const char* op_name) {
     auto buf = arr.request();
     if (buf.ndim != 1) {
         throw py::type_error(std::string(op_name) + " expects 1-D numpy array");
@@ -234,16 +240,16 @@ std::shared_ptr<DataFrame> array_to_df(const DataFrame& self, const py::array& a
 
     const T* ptr = static_cast<const T*>(buf.ptr);
     std::size_t n = static_cast<std::size_t>(buf.size);
-    std::size_t nrows = self.num_rows();
+    std::size_t nrows = self->num_rows();
     if (n != 1 && n != nrows) {
         throw std::invalid_argument(
             "array length (" + std::to_string(n) +
             ") must be 1 (scalar) or num_rows (" + std::to_string(nrows) + ")");
     }
 
-    self.ensure_has_columns();
+    self->ensure_has_columns();
 
-    const std::string& cname = self.last_column_name();
+    const std::string& cname = self->last_column_name();
     auto tmp = std::make_shared<DataFrame>();
     tmp->add_column<T>(
         cname,
@@ -251,10 +257,13 @@ std::shared_ptr<DataFrame> array_to_df(const DataFrame& self, const py::array& a
     return tmp;
 }
 
-std::shared_ptr<DataFrame> scalar_to_df(const DataFrame& self, py::handle value, const char* op_name) {
-    self.ensure_has_columns();
-    const std::string& cname = self.last_column_name();
-    const std::size_t nrows = self.num_rows();
+std::shared_ptr<DataFrame> scalar_to_df(
+    const std::shared_ptr<DataFrame>& self,
+    py::handle value,
+    const char* op_name) {
+    self->ensure_has_columns();
+    const std::string& cname = self->last_column_name();
+    const std::size_t nrows = self->num_rows();
 
     auto tmp = std::make_shared<DataFrame>();
     if (PyComplex_Check(value.ptr())) {
@@ -309,7 +318,10 @@ std::shared_ptr<DataFrame> scalar_to_df(const DataFrame& self, py::handle value,
         " expects DataFrame, scalar number, or 1-D numpy array");
 }
 
-std::shared_ptr<DataFrame> coerce_to_df(const DataFrame& self, py::handle value, const char* op_name) {
+std::shared_ptr<DataFrame> coerce_to_df(
+    const std::shared_ptr<DataFrame>& self,
+    py::handle value,
+    const char* op_name) {
     if (py::isinstance<py::array>(value)) {
         py::array arr = py::reinterpret_borrow<py::array>(value);
 
@@ -332,12 +344,12 @@ std::shared_ptr<DataFrame> coerce_to_df(const DataFrame& self, py::handle value,
 }
 
 std::shared_ptr<DataFrame> unary_to_double(
-    const DataFrame& self,
+    const std::shared_ptr<DataFrame>& self,
     const std::function<double(double)>& fn_d,
     const std::function<double(const DComplex&)>& fn_c)
 {
-    self.ensure_has_columns();
-    const Column& cc = self.last_column();
+    self->ensure_has_columns();
+    const Column& cc = self->last_column();
     std::vector<double> out;
     out.reserve(cc.size());
     switch (cc.tag) {
@@ -355,17 +367,17 @@ std::shared_ptr<DataFrame> unary_to_double(
     }
     Column nc = make_column<double>(out);
     nc.quantity = cc.quantity;
-    return self.copy_with_last_column(nc);
+    return self->copy_with_last_column(nc);
 }
 
 std::shared_ptr<DataFrame> unary_promote(
-    const DataFrame& self,
+    const std::shared_ptr<DataFrame>& self,
     const std::function<double(double)>& fn_d,
     const std::function<DComplex(const DComplex&)>& fn_c)
 {
-    self.ensure_has_columns();
-    const Column& cc = self.last_column();
-    auto r = self.copy();
+    self->ensure_has_columns();
+    const Column& cc = self->last_column();
+    auto r = self->copy();
     switch (cc.tag) {
         case DType::Int: {
             std::vector<double> out;
@@ -388,10 +400,10 @@ std::shared_ptr<DataFrame> unary_promote(
     return r;
 }
 
-std::shared_ptr<DataFrame> negate_last(const DataFrame& df) {
-    df.ensure_has_columns();
-    auto r = df.copy();
-    switch (df.last_column().tag) {
+std::shared_ptr<DataFrame> negate_last(const std::shared_ptr<DataFrame>& df) {
+    df->ensure_has_columns();
+    auto r = df->copy();
+    switch (df->last_column().tag) {
         case DType::Int:
             for (auto& x : r->last_column_as<int>()) x = -x;
             break;
@@ -428,39 +440,71 @@ T require_arg(const py::args& args, int index) {
     }
 }
 
-const DataFrame& require_rhs_df(const DataFrame& self, py::handle rhs, const char* op_name, std::shared_ptr<DataFrame>& owned) {
+std::shared_ptr<DataFrame> df_handle_to_ptr(py::handle value) {
+    try {
+        return value.cast<std::shared_ptr<DataFrame>>();
+    } catch (const py::cast_error&) {
+        DataFrame& ref = value.cast<DataFrame&>();
+        return std::shared_ptr<DataFrame>(&ref, [](DataFrame*) {});
+    }
+}
+
+std::shared_ptr<DataFrame> require_df_arg(const py::args& args, int index) {
+    if (index < 0) {
+        throw py::index_error("argument index must be non-negative");
+    }
+
+    const std::size_t pos = static_cast<std::size_t>(index);
+    if (pos >= args.size()) {
+        throw py::index_error(
+            "argument " + std::to_string(index) +
+            " out of range (size=" + std::to_string(args.size()) + ")");
+    }
+
+    py::handle value = args[pos];
+    if (!py::isinstance<exprdf::DataFrame>(value)) {
+        throw py::type_error("argument " + std::to_string(index) + " expects DataFrame");
+    }
+    return df_handle_to_ptr(value);
+}
+
+std::shared_ptr<DataFrame> require_rhs_df(
+    const std::shared_ptr<DataFrame>& self,
+    py::handle rhs,
+    const char* op_name,
+    std::shared_ptr<DataFrame>& owned) {
     if (py::isinstance<exprdf::DataFrame>(rhs)) {
-        return rhs.cast<const DataFrame&>();
+        return df_handle_to_ptr(rhs);
     }
     owned = coerce_to_df(self, rhs, op_name);
-    return *owned;
+    return owned;
 }
 
 py::object op_add(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
-    const DataFrame& rhs = require_rhs_df(df, args[1], "add", rhs_owned);
+    std::shared_ptr<DataFrame> rhs = require_rhs_df(df, args[1], "add", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithAdd()));
 }
 
 py::object op_sub(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
-    const DataFrame& rhs = require_rhs_df(df, args[1], "sub", rhs_owned);
+    std::shared_ptr<DataFrame> rhs = require_rhs_df(df, args[1], "sub", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithSub()));
 }
 
 py::object op_mul(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
-    const DataFrame& rhs = require_rhs_df(df, args[1], "mul", rhs_owned);
+    std::shared_ptr<DataFrame> rhs = require_rhs_df(df, args[1], "mul", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithMul()));
 }
 
 py::object op_truediv(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
-    const DataFrame& rhs = require_rhs_df(df, args[1], "truediv", rhs_owned);
+    std::shared_ptr<DataFrame> rhs = require_rhs_df(df, args[1], "truediv", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithDiv()));
 }
 
@@ -473,28 +517,28 @@ py::object op_rmul(const py::args& args) {
 }
 
 py::object op_rsub(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> lhs_owned;
-    const DataFrame& lhs = require_rhs_df(df, args[1], "rsub", lhs_owned);
+    std::shared_ptr<DataFrame> lhs = require_rhs_df(df, args[1], "rsub", lhs_owned);
     return py::cast(apply_binary_op_last(lhs, df, ArithSub()));
 }
 
 py::object op_rtruediv(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     std::shared_ptr<DataFrame> lhs_owned;
-    const DataFrame& lhs = require_rhs_df(df, args[1], "rtruediv", lhs_owned);
+    std::shared_ptr<DataFrame> lhs = require_rhs_df(df, args[1], "rtruediv", lhs_owned);
     return py::cast(apply_binary_op_last(lhs, df, ArithDiv()));
 }
 
 py::object op_neg(const py::args& args) {
-    return py::cast(negate_last(require_arg<const DataFrame&>(args, 0)));
+    return py::cast(negate_last(require_df_arg(args, 0)));
 }
 
 py::object op_abs(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
-    df.ensure_has_columns();
-    const Column& cc = df.last_column();
-    auto r = df.copy();
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    df->ensure_has_columns();
+    const Column& cc = df->last_column();
+    auto r = df->copy();
     switch (cc.tag) {
         case DType::Int:
             for (auto& x : r->last_column_as<int>()) x = std::abs(x);
@@ -520,7 +564,7 @@ py::object op_abs(const py::args& args) {
 py::object op_mag(const py::args& args) { return op_abs(args); }
 
 py::object op_real(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return x; },
@@ -528,7 +572,7 @@ py::object op_real(const py::args& args) {
 }
 
 py::object op_imag(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double) { return 0.0; },
@@ -536,7 +580,7 @@ py::object op_imag(const py::args& args) {
 }
 
 py::object op_phase(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return std::atan2(0.0, x); },
@@ -544,7 +588,7 @@ py::object op_phase(const py::args& args) {
 }
 
 py::object op_dB(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return 20.0 * std::log10(std::abs(x)); },
@@ -552,7 +596,7 @@ py::object op_dB(const py::args& args) {
 }
 
 py::object op_dBm(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return 20.0 * std::log10(std::abs(x)) + 10.0; },
@@ -560,9 +604,9 @@ py::object op_dBm(const py::args& args) {
 }
 
 py::object op_wtodBm(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
-    df.ensure_has_columns();
-    const Column& cc = df.last_column();
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    df->ensure_has_columns();
+    const Column& cc = df->last_column();
     std::vector<double> out;
     out.reserve(cc.size());
     switch (cc.tag) {
@@ -580,14 +624,14 @@ py::object op_wtodBm(const py::args& args) {
     }
     Column nc = make_column<double>(out);
     nc.quantity = cc.quantity;
-    return py::cast(df.copy_with_last_column(nc));
+    return py::cast(df->copy_with_last_column(nc));
 }
 
 py::object op_sqr(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
-    df.ensure_has_columns();
-    auto r = df.copy();
-    switch (df.last_column().tag) {
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    df->ensure_has_columns();
+    auto r = df->copy();
+    switch (df->last_column().tag) {
         case DType::Int:
             for (auto& x : r->last_column_as<int>()) x = x * x;
             break;
@@ -604,7 +648,7 @@ py::object op_sqr(const py::args& args) {
 }
 
 py::object op_sqrt(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::sqrt(x); },
@@ -612,7 +656,7 @@ py::object op_sqrt(const py::args& args) {
 }
 
 py::object op_exp(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::exp(x); },
@@ -620,7 +664,7 @@ py::object op_exp(const py::args& args) {
 }
 
 py::object op_ln(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::log(x); },
@@ -628,7 +672,7 @@ py::object op_ln(const py::args& args) {
 }
 
 py::object op_log10(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::log10(x); },
@@ -636,10 +680,10 @@ py::object op_log10(const py::args& args) {
 }
 
 py::object op_conj(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
-    df.ensure_has_columns();
-    const Column& cc = df.last_column();
-    auto r = df.copy();
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    df->ensure_has_columns();
+    const Column& cc = df->last_column();
+    auto r = df->copy();
     switch (cc.tag) {
         case DType::Int:
         case DType::Double:
@@ -654,11 +698,11 @@ py::object op_conj(const py::args& args) {
 }
 
 py::object op_zin(const py::args& args) {
-    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     const DComplex z0 = (args.size() >= 2) ? args[1].cast<DComplex>() : DComplex(50.0, 0.0);
-    df.ensure_has_columns("zin: DataFrame");
+    df->ensure_has_columns("zin: DataFrame");
 
-    const Column& cc = df.last_column();
+    const Column& cc = df->last_column();
     if (cc.tag == DType::String) {
         throw std::invalid_argument("zin: string columns not supported");
     }
@@ -676,7 +720,7 @@ py::object op_zin(const py::args& args) {
 
     Column nc = make_column<DComplex>(out);
     nc.quantity = cc.quantity;
-    return py::cast(df.copy_with_last_column(nc));
+    return py::cast(df->copy_with_last_column(nc));
 }
 
 const std::vector<OpSpec>& all_ops() {
@@ -709,7 +753,10 @@ const std::vector<OpSpec>& all_ops() {
     return specs;
 }
 
-py::object invoke_df_first(const std::string& name, const DataFrame& df, const py::args& rest) {
+py::object invoke_df_first(
+    const std::string& name,
+    const std::shared_ptr<DataFrame>& df,
+    const py::args& rest) {
     py::tuple full_args(1 + rest.size());
     full_args[0] = py::cast(df);
     for (std::size_t i = 0; i < rest.size(); ++i) {
@@ -751,7 +798,7 @@ void register_module_op(py::module_& m, const OpSpec& spec) {
         case ModuleBindMode::DataFrameFirstArgs:
             m.def(
                 spec.name.c_str(),
-                [op_name](const exprdf::DataFrame& df, py::args args) {
+                [op_name](std::shared_ptr<exprdf::DataFrame> df, py::args args) {
                     return invoke_df_first(op_name, df, args);
                 },
                 py::arg("df"),
@@ -759,7 +806,7 @@ void register_module_op(py::module_& m, const OpSpec& spec) {
             if (lower_name != op_name) {
                 m.def(
                     lower_name.c_str(),
-                    [op_name](const exprdf::DataFrame& df, py::args args) {
+                    [op_name](std::shared_ptr<exprdf::DataFrame> df, py::args args) {
                         return invoke_df_first(op_name, df, args);
                     },
                     py::arg("df"),

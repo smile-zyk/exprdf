@@ -662,10 +662,11 @@ void bind_module_functions(py::module_& m) {
     for (std::size_t i = 0; i < specs.size(); ++i) {
         const OpSpec& spec = specs[i];
         if (!spec.export_to_module) continue;
+        const std::string op_name = spec.name;
         m.def(
             spec.name.c_str(),
-            [name = spec.name](py::args args) {
-                return invoke(name, py::tuple(args));
+            [op_name](py::args args) {
+                return invoke(op_name, py::tuple(args));
             },
             spec.doc);
     }

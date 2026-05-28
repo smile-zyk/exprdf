@@ -45,20 +45,24 @@ template <> struct DTypeTag<double>                 { static const DType value =
 template <> struct DTypeTag<std::string>            { static const DType value = DType::String; };
 template <> struct DTypeTag<std::complex<double>>   { static const DType value = DType::Complex; };
 
-// Floating-point approximate equality (relative tolerance, normalised by max(|a|,|b|,1)).
-// Using max(..., 1.0) as the scale means:
-//   - for values O(1) or larger : relative tolerance eps applies
-//   - for values much smaller than 1 : absolute tolerance eps applies
-// This avoids the pitfall of a fixed absolute floor declaring e.g. 1e-13 == 9e-13.
-inline bool approx_equal(double a, double b, double eps = 1e-9) {
-    double scale = std::max({std::abs(a), std::abs(b), 1.0});
-    return std::abs(a - b) <= eps * scale;
+// Floating-point approximate equality (isclose-style):
+//   |a-b| <= max(abs_tol, rel_tol * max(|a|, |b|))
+// Defaults follow common engineering practice similar to Python's math.isclose.
+inline bool approx_equal(double a, double b,
+                         double rel_tol = 1e-9,
+                         double abs_tol = 1e-15) {
+    double diff = std::abs(a - b);
+    double scale = std::max(std::abs(a), std::abs(b));
+    return diff <= std::max(abs_tol, rel_tol * scale);
 }
 
 inline bool approx_equal(const std::complex<double>& a,
-                         const std::complex<double>& b, double eps = 1e-9) {
-    return approx_equal(a.real(), b.real(), eps) &&
-           approx_equal(a.imag(), b.imag(), eps);
+                         const std::complex<double>& b,
+                         double rel_tol = 1e-9,
+                         double abs_tol = 1e-15) {
+    const double diff = std::abs(a - b);
+    const double scale = std::max(std::abs(a), std::abs(b));
+    return diff <= std::max(abs_tol, rel_tol * scale);
 }
 
 // Type-aware equality: approximate for floating-point types, exact otherwise

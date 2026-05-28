@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <stdexcept>
 
 namespace exprdf {
@@ -271,6 +272,38 @@ std::shared_ptr<DataFrame> scalar_to_df(const DataFrame& self, py::handle value,
         tmp->add_column<int>(cname, std::vector<int>(nrows, i));
         return tmp;
     }
+
+    // NumPy scalar support (e.g. numpy.int64/float64/complex128):
+    // use 0-D dtype kind to preserve numeric intent.
+    if (py::array arr = py::array::ensure(value)) {
+        if (arr.ndim() == 0) {
+            const std::string kind = py::str(arr.dtype().attr("kind")).cast<std::string>();
+            if (!kind.empty()) {
+                const char k = kind[0];
+                if (k == 'i' || k == 'u') {
+                    long long v = py::cast<long long>(value);
+                    if (v < static_cast<long long>(std::numeric_limits<int>::min()) ||
+                        v > static_cast<long long>(std::numeric_limits<int>::max())) {
+                        throw py::type_error(
+                            std::string(op_name) + " integer scalar out of int range");
+                    }
+                    tmp->add_column<int>(cname, std::vector<int>(nrows, static_cast<int>(v)));
+                    return tmp;
+                }
+                if (k == 'f') {
+                    double d = py::cast<double>(value);
+                    tmp->add_column<double>(cname, std::vector<double>(nrows, d));
+                    return tmp;
+                }
+                if (k == 'c') {
+                    DComplex c = py::cast<DComplex>(value);
+                    tmp->add_column<DComplex>(cname, std::vector<DComplex>(nrows, c));
+                    return tmp;
+                }
+            }
+        }
+    }
+
     throw py::type_error(
         std::string(op_name) +
         " expects DataFrame, scalar number, or 1-D numpy array");

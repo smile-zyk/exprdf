@@ -73,6 +73,11 @@ target_link_libraries(dataframe_qt PUBLIC dataframe Qt5::Widgets)
 add_executable(example_view example_view.cpp)
 target_link_libraries(example_view PRIVATE dataframe_qt)
 
+# C++ unit test: DataFrame sub() parent weak_ptr behavior
+add_executable(test_dataframe tests/test_dataframe.cpp)
+target_link_libraries(test_dataframe PRIVATE dataframe)
+add_test(NAME test_dataframe_cpp COMMAND test_dataframe)
+
 # Deploy Qt DLLs next to example_view
 get_target_property(_qmake_path Qt5::qmake IMPORTED_LOCATION)
 get_filename_component(_qt_bin_dir "${_qmake_path}" DIRECTORY)

@@ -492,7 +492,7 @@ struct IndexDim {
 // up by name via an unordered_map.  Index dimensions (index_dims_)
 // describe the multi-dimensional layout of the rows.
 // ============================================================
-class DataFrame {
+class DataFrame : public std::enable_shared_from_this<DataFrame> {
 public:
     DataFrame() {}
 
@@ -1933,6 +1933,16 @@ public:
         if (!has_column(name))
             throw std::invalid_argument("Column '" + name + "' not found");
 
+        // Parent reference is optional: it is set only when this DataFrame
+        // is itself managed by std::shared_ptr.
+        std::weak_ptr<const DataFrame> parent_ref;
+        try {
+            parent_ref = this->shared_from_this();
+        } catch (const std::bad_weak_ptr&) {
+            // Called on an object not owned by std::shared_ptr (e.g. stack).
+            // Keep parent_ref empty to avoid invalid lifetime assumptions.
+        }
+
         if (!is_index(name)) {
             // Dependent column: all independents + this dependent
             auto result = std::make_shared<DataFrame>();
@@ -1946,6 +1956,7 @@ public:
             result->col_order_.push_back(name);
             result->columns_[name] = columns_.find(name)->second.clone();
             result->type_ = type_;
+            result->parent_ = parent_ref;
             return result;
         } else {
             // Independent column: all outer independents up to and including it
@@ -1991,9 +2002,14 @@ public:
             }
             result->type_ = type_;
             rebuild_index_dims(*result);
+            result->parent_ = parent_ref;
             return result;
         }
     }
+
+    bool has_parent() const { return !parent_.expired(); }
+
+    std::shared_ptr<const DataFrame> parent() const { return parent_.lock(); }
 
     // --- List / matrix column element extraction ---
 
@@ -2470,6 +2486,7 @@ private:
     std::string path_;                             // source file path (metadata only)
     std::string type_;                             // data-type tag   (metadata only)
     std::string name_;                             // dataset name    (metadata only)
+    std::weak_ptr<const DataFrame> parent_;        // optional lineage pointer; set by sub()
 
     // Rebuild index_dims_ metadata for a freshly-constructed result DataFrame.
     //

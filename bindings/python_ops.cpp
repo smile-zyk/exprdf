@@ -374,8 +374,25 @@ std::shared_ptr<DataFrame> negate_last(const DataFrame& df) {
     return r;
 }
 
-const DataFrame& require_df(const py::args& args) {
-    return args[0].cast<const DataFrame&>();
+template <typename T>
+T require_arg(const py::args& args, int index) {
+    if (index < 0) {
+        throw py::index_error("argument index must be non-negative");
+    }
+
+    const std::size_t pos = static_cast<std::size_t>(index);
+    if (pos >= args.size()) {
+        throw py::index_error(
+            "argument " + std::to_string(index) +
+            " out of range (size=" + std::to_string(args.size()) + ")");
+    }
+
+    try {
+        return args[pos].cast<T>();
+    } catch (const py::cast_error&) {
+        throw py::type_error(
+            "argument " + std::to_string(index) + " has incorrect type");
+    }
 }
 
 const DataFrame& require_rhs_df(const DataFrame& self, py::handle rhs, const char* op_name, std::shared_ptr<DataFrame>& owned) {
@@ -387,28 +404,28 @@ const DataFrame& require_rhs_df(const DataFrame& self, py::handle rhs, const cha
 }
 
 py::object op_add(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
     const DataFrame& rhs = require_rhs_df(df, args[1], "add", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithAdd()));
 }
 
 py::object op_sub(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
     const DataFrame& rhs = require_rhs_df(df, args[1], "sub", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithSub()));
 }
 
 py::object op_mul(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
     const DataFrame& rhs = require_rhs_df(df, args[1], "mul", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithMul()));
 }
 
 py::object op_truediv(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> rhs_owned;
     const DataFrame& rhs = require_rhs_df(df, args[1], "truediv", rhs_owned);
     return py::cast(apply_binary_op_last(df, rhs, ArithDiv()));
@@ -423,25 +440,25 @@ py::object op_rmul(const py::args& args) {
 }
 
 py::object op_rsub(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> lhs_owned;
     const DataFrame& lhs = require_rhs_df(df, args[1], "rsub", lhs_owned);
     return py::cast(apply_binary_op_last(lhs, df, ArithSub()));
 }
 
 py::object op_rtruediv(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     std::shared_ptr<DataFrame> lhs_owned;
     const DataFrame& lhs = require_rhs_df(df, args[1], "rtruediv", lhs_owned);
     return py::cast(apply_binary_op_last(lhs, df, ArithDiv()));
 }
 
 py::object op_neg(const py::args& args) {
-    return py::cast(negate_last(require_df(args)));
+    return py::cast(negate_last(require_arg<const DataFrame&>(args, 0)));
 }
 
 py::object op_abs(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     df.ensure_has_columns();
     const Column& cc = df.last_column();
     auto r = df.copy();
@@ -470,7 +487,7 @@ py::object op_abs(const py::args& args) {
 py::object op_mag(const py::args& args) { return op_abs(args); }
 
 py::object op_real(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return x; },
@@ -478,7 +495,7 @@ py::object op_real(const py::args& args) {
 }
 
 py::object op_imag(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double) { return 0.0; },
@@ -486,7 +503,7 @@ py::object op_imag(const py::args& args) {
 }
 
 py::object op_phase(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return std::atan2(0.0, x); },
@@ -494,7 +511,7 @@ py::object op_phase(const py::args& args) {
 }
 
 py::object op_dB(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return 20.0 * std::log10(std::abs(x)); },
@@ -502,7 +519,7 @@ py::object op_dB(const py::args& args) {
 }
 
 py::object op_dBm(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_to_double(
         df,
         [](double x) { return 20.0 * std::log10(std::abs(x)) + 10.0; },
@@ -510,7 +527,7 @@ py::object op_dBm(const py::args& args) {
 }
 
 py::object op_wtodBm(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     df.ensure_has_columns();
     const Column& cc = df.last_column();
     std::vector<double> out;
@@ -534,7 +551,7 @@ py::object op_wtodBm(const py::args& args) {
 }
 
 py::object op_sqr(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     df.ensure_has_columns();
     auto r = df.copy();
     switch (df.last_column().tag) {
@@ -554,7 +571,7 @@ py::object op_sqr(const py::args& args) {
 }
 
 py::object op_sqrt(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::sqrt(x); },
@@ -562,7 +579,7 @@ py::object op_sqrt(const py::args& args) {
 }
 
 py::object op_exp(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::exp(x); },
@@ -570,7 +587,7 @@ py::object op_exp(const py::args& args) {
 }
 
 py::object op_ln(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::log(x); },
@@ -578,7 +595,7 @@ py::object op_ln(const py::args& args) {
 }
 
 py::object op_log10(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     return py::cast(unary_promote(
         df,
         [](double x) { return std::log10(x); },
@@ -586,7 +603,7 @@ py::object op_log10(const py::args& args) {
 }
 
 py::object op_conj(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     df.ensure_has_columns();
     const Column& cc = df.last_column();
     auto r = df.copy();
@@ -604,7 +621,7 @@ py::object op_conj(const py::args& args) {
 }
 
 py::object op_zin(const py::args& args) {
-    const DataFrame& df = require_df(args);
+    const DataFrame& df = require_arg<const DataFrame&>(args, 0);
     const DComplex z0 = (args.size() >= 2) ? args[1].cast<DComplex>() : DComplex(50.0, 0.0);
     df.ensure_has_columns("zin: DataFrame");
 

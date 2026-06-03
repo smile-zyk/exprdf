@@ -761,10 +761,33 @@ void bind_types_and_dataframe(py::module_& m) {
              "Decompose flat row index into per-dimension indices (inverse of flat_index)")
 
         .def("loc", [](const exprdf::DataFrame& self, py::args args) {
-            std::vector<int64_t> indices;
-            for (auto a : args) indices.push_back(a.cast<int64_t>());
-            return self.loc(indices);
-        }, "Multi-index loc: fix innermost N dimensions (right-aligned), -1 = wildcard")
+            // Each arg may be an int (single value / -1 wildcard) or a list/tuple of ints.
+            bool has_list = false;
+            for (auto a : args)
+                if (py::isinstance<py::list>(a) || py::isinstance<py::tuple>(a)) { has_list = true; break; }
+
+            if (!has_list) {
+                // Fast path: all plain ints -> vector<int> (-1 becomes wildcard inside C++)
+                std::vector<int> indices;
+                for (auto a : args) indices.push_back(a.cast<int>());
+                return self.loc(indices);
+            }
+
+            // Mixed path: build vector<vector<int>>
+            std::vector<std::vector<int>> selectors;
+            for (auto a : args) {
+                if (py::isinstance<py::list>(a) || py::isinstance<py::tuple>(a)) {
+                    std::vector<int> sel;
+                    for (auto item : a.cast<py::sequence>()) sel.push_back(item.cast<int>());
+                    selectors.push_back(std::move(sel));
+                } else {
+                    int idx = a.cast<int>();
+                    selectors.push_back(idx == -1 ? std::vector<int>{} : std::vector<int>{idx});
+                }
+            }
+            return self.loc(selectors);
+        }, "Multi-index loc: fix innermost N dimensions (right-aligned).\n"
+           "Each arg: int (single value, -1=wildcard) or list/tuple of ints (multi-value).")
 
         .def("sub", &exprdf::DataFrame::sub, py::arg("name"),
              "Extract sub-DataFrame by column name")

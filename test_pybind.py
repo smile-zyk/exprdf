@@ -1685,4 +1685,66 @@ assert r.get_column("x") == [11.0, 22.0, 33.0]
 
 print("PASSED")
 
+# ── mi reused from Test 15: a in {1,2}, b in {10,20,30}, v=[1..6] ────────────
+print("\n=== Python Test B11: loc with index list selectors ===")
+
+# Single-value int: same as before
+s = mi.loc(0)       # b=10
+assert s.num_rows() == 2
+assert s["v"] == [1.0, 4.0]
+
+# Multi-value list on innermost dim
+s2 = mi.loc([0, 1])     # b in {10, 20}
+assert s2.num_rows() == 4
+assert s2.num_indices() == 2   # b stays in index (multi-value)
+assert s2["v"] == [1.0, 2.0, 4.0, 5.0]
+
+# Multi-value list on both dims
+s3 = mi.loc([0, 1], [0, 2])  # a in {1,2}, b in {10,30}  -- right-aligned, k=2
+assert s3.num_rows() == 4
+assert s3["v"] == [1.0, 3.0, 4.0, 6.0]
+
+# Empty list = wildcard (same result as -1)
+s4 = mi.loc([], 1)   # a=wildcard, b=20
+assert s4.num_rows() == 2
+assert s4["v"] == [2.0, 5.0]
+assert s4.num_indices() == 1   # only 'a' remains (b is fixed single-value)
+
+# -1 wildcard still works
+s5 = mi.loc(-1, 2)   # a=wildcard, b=30
+assert s5.num_rows() == 2
+assert s5["v"] == [3.0, 6.0]
+
+# Single-value list behaves like scalar (dim dropped)
+s6 = mi.loc([0])     # b=10, list of one → fixed → dropped
+assert s6.num_rows() == 2
+assert s6.num_indices() == 1
+assert s6["v"] == [1.0, 4.0]
+
+# Multi-value then fix outer dim: use single selector on both dims
+s7 = mi.loc(0, [0, 1])  # a=1, b in {10,20}
+assert s7.num_rows() == 2
+assert s7["v"] == [1.0, 2.0]
+
+# Three-dim DataFrame
+mi3 = pdf.DataFrame()
+mi3.add_uniform_index("a", [1, 2])
+mi3.add_uniform_index("b", [10, 20])
+mi3.add_uniform_index("c", [100, 200])
+mi3.add_column("w", [float(i) for i in range(8)])
+# w layout: a1b10c100, a1b10c200, a1b20c100, a1b20c200,
+#            a2b10c100, a2b10c200, a2b20c100, a2b20c200
+
+# b in {10}, c in {0,1} -> all c for b=10
+s8 = mi3.loc([0], [0, 1])
+assert s8.num_rows() == 4
+assert s8["w"] == [0.0, 1.0, 4.0, 5.0]
+
+# a in {0,1}, b=0, c=1
+s9 = mi3.loc([0, 1], 0, 1)
+assert s9.num_rows() == 2
+assert s9["w"] == [1.0, 5.0]
+
+print("PASSED")
+
 print("\n=== ALL PYTHON TESTS PASSED ===")

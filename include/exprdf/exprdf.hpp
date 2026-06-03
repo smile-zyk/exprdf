@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <complex>
 #include <cmath>
 #include <stdexcept>
@@ -2107,55 +2108,58 @@ public:
     // --- Multi-index selection ---
 
     // loc: select rows by fixing the innermost N index dimensions (right-aligned).
-    //   loc({i})      -- fix the last dim at position i
-    //   loc({i, j})   -- fix the last two dims at i, j
-    //   -1 (wildcard) -- keep all positions for that dimension (column remains in result)
-    //   Grouped dims  : outer groups that do not contain position i are silently dropped.
+    //   Each selector is a list of positions for that dimension:
+    //     {i}       -- fix that dim at position i (dim is dropped from result index)
+    //     {i, j, …} -- keep rows whose ordinal is in the set (dim stays in result index)
+    //     {}        -- wildcard: keep all positions for that dimension (dim stays in result index)
+    //   Grouped dims: outer groups that contain no matching position are silently dropped.
     //
     // Semantics are aligned with flat_index / multi_index:
     //   - row membership is decided purely by metadata ordinals from multi_index(row)
     //   - no column-value run scan is used
     //   - uniform and regular grouped dims enforce strict range checks
-    // Returns a new DataFrame with the outer (unfixed, non-wildcard) dims as its index.
-    std::shared_ptr<DataFrame> loc(const std::vector<int64_t>& indices) const {
-        if (indices.empty()) return copy();
+    // Returns a new DataFrame with outer (unfixed / wildcard / multi-value) dims as its index.
+    std::shared_ptr<DataFrame> loc(const std::vector<std::vector<int>>& selectors) const {
+        if (selectors.empty()) return copy();
         std::size_t n = index_dims_.size();
-        std::size_t k = indices.size();
+        std::size_t k = selectors.size();
         if (k > n)
             throw std::invalid_argument(
-                "Too many indices: got " + std::to_string(k) +
+                "Too many selectors: got " + std::to_string(k) +
                 ", have " + std::to_string(n) + " dimensions");
 
         std::size_t n_outer = n - k;
-        // Validate selector range for fixed dimensions.
-        // Uniform and regular grouped dimensions have fixed valid range.
-        for (std::size_t i = 0; i < k; ++i) {
-            std::size_t dim = n_outer + i;
-            int64_t idx = indices[i];
-            if (idx == -1) continue;
-            if (idx < 0)
-                throw std::out_of_range(
-                    "\"" + index_dims_[dim].name + "\" (dimension " + std::to_string(dim + 1) +
-                    "): index " + std::to_string(idx) + " is negative");
 
-            const IndexDim& idim = index_dims_[dim];
-            if (idim.is_uniform()) {
-                if (static_cast<std::size_t>(idx) >= idim.levels.size())
+        // Build unordered_sets for O(1) membership test per dimension.
+        std::vector<std::unordered_set<std::size_t>> sets(k);
+        for (std::size_t i = 0; i < k; ++i) {
+            const auto& sel = selectors[i];
+            if (sel.empty()) continue; // wildcard
+            const IndexDim& idim = index_dims_[n_outer + i];
+            for (int idx : sel) {
+                if (idx < 0)
                     throw std::out_of_range(
-                        "\"" + idim.name + "\" (dimension " + std::to_string(dim + 1) +
-                        "): index " + std::to_string(idx) +
-                        " is outside range 0.." + std::to_string(static_cast<int64_t>(idim.levels.size()) - 1));
-            } else if (idim.is_regular_grouped()) {
-                if (static_cast<std::size_t>(idx) >= idim.group_lengths[0])
-                    throw std::out_of_range(
-                        "\"" + idim.name + "\" (dimension " + std::to_string(dim + 1) +
-                        "): index " + std::to_string(idx) +
-                        " is outside range 0.." + std::to_string(static_cast<int64_t>(idim.group_lengths[0]) - 1));
+                        "\"" + idim.name + "\": index " + std::to_string(idx) + " is negative");
+                if (idim.is_uniform()) {
+                    if (static_cast<std::size_t>(idx) >= idim.levels.size())
+                        throw std::out_of_range(
+                            "\"" + idim.name + "\": index " + std::to_string(idx) +
+                            " is outside range 0.." +
+                            std::to_string(static_cast<int>(idim.levels.size()) - 1));
+                } else if (idim.is_regular_grouped()) {
+                    if (static_cast<std::size_t>(idx) >= idim.group_lengths[0])
+                        throw std::out_of_range(
+                            "\"" + idim.name + "\": index " + std::to_string(idx) +
+                            " is outside range 0.." +
+                            std::to_string(static_cast<int>(idim.group_lengths[0]) - 1));
+                }
+                sets[i].insert(static_cast<std::size_t>(idx));
             }
         }
 
-        // Metadata-driven filtering: keep row r iff multi_index(r) matches selectors
-        // on the right-aligned inner dimensions.
+        // A dim is "fixed" when exactly one value is selected -> dropped from result index.
+        auto is_fixed = [&](std::size_t i) { return selectors[i].size() == 1; };
+
         const MultiIndexCtx& mi_ctx = get_mi_ctx();
         std::vector<std::size_t> row_indices;
         row_indices.reserve(num_rows());
@@ -2163,9 +2167,8 @@ public:
             std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
             bool keep = true;
             for (std::size_t i = 0; i < k; ++i) {
-                int64_t idx = indices[i];
-                if (idx == -1) continue;
-                if (mi[n_outer + i] != static_cast<std::size_t>(idx)) {
+                if (sets[i].empty()) continue; // wildcard
+                if (sets[i].find(mi[n_outer + i]) == sets[i].end()) {
                     keep = false;
                     break;
                 }
@@ -2174,20 +2177,17 @@ public:
         }
 
         std::vector<std::string> fixed_names;
-        for (std::size_t i = 0; i < k; ++i) {
-            std::size_t dim = n_outer + i;
-            if (indices[i] != -1)
-                fixed_names.push_back(index_dims_[dim].name);
-        }
+        for (std::size_t i = 0; i < k; ++i)
+            if (is_fixed(i))
+                fixed_names.push_back(index_dims_[n_outer + i].name);
 
-        // For all-index DataFrames, keep the last column even when it is fixed,
+        // For all-index DataFrames keep the last column even when fixed,
         // so loc() never returns a column-less result.
         bool all_index_columns = (col_order_.size() == index_dims_.size());
         std::string force_keep_name;
         if (all_index_columns && !col_order_.empty())
             force_keep_name = col_order_.back();
 
-        // Build result DataFrame
         auto result = std::make_shared<DataFrame>();
         for (const auto& name : col_order_) {
             if (name != force_keep_name &&
@@ -2200,15 +2200,28 @@ public:
         for (std::size_t i = 0; i < n_outer; ++i)
             result->index_dims_.push_back(index_dims_[i]);
         for (std::size_t i = 0; i < k; ++i)
-            if (indices[i] == -1)
+            if (!is_fixed(i))
                 result->index_dims_.push_back(index_dims_[n_outer + i]);
 
         rebuild_index_dims(*result);
         return result;
     }
 
-    std::shared_ptr<DataFrame> loc(std::initializer_list<int64_t> indices) const {
-        return loc(std::vector<int64_t>(indices));
+    std::shared_ptr<DataFrame> loc(std::initializer_list<std::vector<int>> selectors) const {
+        return loc(std::vector<std::vector<int>>(selectors));
+    }
+
+    // Convenience: each int i -> {i} (single-value / fixed); -1 -> {} (wildcard).
+    std::shared_ptr<DataFrame> loc(const std::vector<int>& indices) const {
+        std::vector<std::vector<int>> selectors;
+        selectors.reserve(indices.size());
+        for (int idx : indices)
+            selectors.push_back(idx == -1 ? std::vector<int>{} : std::vector<int>{idx});
+        return loc(selectors);
+    }
+
+    std::shared_ptr<DataFrame> loc(std::initializer_list<int> indices) const {
+        return loc(std::vector<int>(indices));
     }
 
     // sub: extract a sub-DataFrame by column name.

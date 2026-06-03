@@ -19,6 +19,10 @@ struct ArithAdd  { template<typename T> T operator()(T a, T b) const { return a 
 struct ArithSub  { template<typename T> T operator()(T a, T b) const { return a - b; } };
 struct ArithMul  { template<typename T> T operator()(T a, T b) const { return a * b; } };
 struct ArithDiv  { template<typename T> T operator()(T a, T b) const { return a / b; } };
+struct ArithPow  {
+    template<typename T>
+    T operator()(T a, T b) const { return static_cast<T>(std::pow(a, b)); }
+};
 
 OpSpec make_op(
     const char* name,
@@ -508,6 +512,13 @@ py::object op_truediv(const py::args& args) {
     return py::cast(apply_binary_op_last(df, rhs, ArithDiv()));
 }
 
+py::object op_pow(const py::args& args) {
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    std::shared_ptr<DataFrame> rhs_owned;
+    std::shared_ptr<DataFrame> rhs = require_rhs_df(df, args[1], "pow", rhs_owned);
+    return py::cast(apply_binary_op_last(df, rhs, ArithPow()));
+}
+
 py::object op_radd(const py::args& args) {
     return op_add(args);
 }
@@ -528,6 +539,13 @@ py::object op_rtruediv(const py::args& args) {
     std::shared_ptr<DataFrame> lhs_owned;
     std::shared_ptr<DataFrame> lhs = require_rhs_df(df, args[1], "rtruediv", lhs_owned);
     return py::cast(apply_binary_op_last(lhs, df, ArithDiv()));
+}
+
+py::object op_rpow(const py::args& args) {
+    std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
+    std::shared_ptr<DataFrame> lhs_owned;
+    std::shared_ptr<DataFrame> lhs = require_rhs_df(df, args[1], "rpow", lhs_owned);
+    return py::cast(apply_binary_op_last(lhs, df, ArithPow()));
 }
 
 py::object op_neg(const py::args& args) {
@@ -729,10 +747,12 @@ const std::vector<OpSpec>& all_ops() {
         make_internal_op("sub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_sub, "internal sub"),
         make_internal_op("mul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_mul, "internal mul"),
         make_internal_op("truediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_truediv, "internal truediv"),
+        make_internal_op("pow", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_pow, "internal pow"),
         make_internal_op("radd", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_radd, "internal radd"),
         make_internal_op("rsub", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rsub, "internal rsub"),
         make_internal_op("rmul", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rmul, "internal rmul"),
         make_internal_op("rtruediv", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rtruediv, "internal rtruediv"),
+        make_internal_op("rpow", {{ArgType::DataFrame, "df"}, {ArgType::Any, "lhs"}}, 2, 2, &op_rpow, "internal rpow"),
         make_internal_op("neg", {{ArgType::DataFrame, "df"}}, 1, 1, &op_neg, "internal neg"),
         make_export_op_df_first("abs", {}, 1, 1, &op_abs, "abs(df): magnitude/absolute value on last column"),
         make_export_op_df_first("mag", {}, 1, 1, &op_mag, "mag(df): alias of abs(df)"),

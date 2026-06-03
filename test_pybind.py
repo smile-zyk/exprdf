@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -1000,12 +1001,27 @@ assert abs(r3.at("v", 1) - 40.0) < 1e-9
 r4 = df_a / df_b
 assert abs(r4.at("v", 2) - 10.0) < 1e-9
 
+rpow_df = df_b ** df_b
+assert abs(rpow_df.at("v", 0) - 1.0) < 1e-9
+assert abs(rpow_df.at("v", 1) - 4.0) < 1e-9
+assert abs(rpow_df.at("v", 2) - 27.0) < 1e-9
+
 # scalar ops on double column
 r5 = df_a + 5.0
 assert abs(r5.at("v", 0) - 15.0) < 1e-9
 
 r6 = df_a * 3.0
 assert abs(r6.at("v", 0) - 30.0) < 1e-9
+
+rpow_s1 = df_b ** 3.0
+assert abs(rpow_s1.at("v", 0) - 1.0) < 1e-9
+assert abs(rpow_s1.at("v", 1) - 8.0) < 1e-9
+assert abs(rpow_s1.at("v", 2) - 27.0) < 1e-9
+
+rpow_s2 = 2.0 ** df_b
+assert abs(rpow_s2.at("v", 0) - 2.0) < 1e-9
+assert abs(rpow_s2.at("v", 1) - 4.0) < 1e-9
+assert abs(rpow_s2.at("v", 2) - 8.0) < 1e-9
 
 r11 = 120.0 / df_a
 assert abs(r11.at("v", 0) - 12.0) < 1e-9
@@ -1567,6 +1583,80 @@ r_neg_cplx = -df_neg_cplx
 assert r_neg_cplx.get_column("z")[0] == complex(-1,-2)
 assert r_neg_cplx.get_column("z")[1] == complex(3,-4)
 
+# explicit python_ops unary/module functions
+df_u1 = pdf.DataFrame()
+df_u1.add_column("z", [complex(3, 4), complex(1, -1)])
+
+r_abs = pdf.abs(df_u1)
+assert abs(r_abs.get_column("z")[0] - 5.0) < 1e-12
+assert abs(r_abs.get_column("z")[1] - (2 ** 0.5)) < 1e-12
+
+r_mag = pdf.mag(df_u1)
+assert abs(r_mag.get_column("z")[0] - 5.0) < 1e-12
+
+r_real = pdf.real(df_u1)
+assert r_real.get_column("z") == [3.0, 1.0]
+
+r_imag = pdf.imag(df_u1)
+assert r_imag.get_column("z") == [4.0, -1.0]
+
+r_phase = pdf.phase(df_u1)
+assert abs(r_phase.get_column("z")[0] - math.atan2(4.0, 3.0)) < 1e-12
+assert abs(r_phase.get_column("z")[1] - math.atan2(-1.0, 1.0)) < 1e-12
+
+df_u2 = pdf.DataFrame()
+df_u2.add_column("x", [1.0, 10.0])
+
+r_db = pdf.dB(df_u2)
+assert abs(r_db.get_column("x")[0] - 0.0) < 1e-12
+assert abs(r_db.get_column("x")[1] - 20.0) < 1e-12
+
+# lowercase alias is auto-registered
+r_db_alias = pdf.db(df_u2)
+assert r_db_alias.get_column("x") == r_db.get_column("x")
+
+r_dbm = pdf.dBm(df_u2)
+assert abs(r_dbm.get_column("x")[0] - 10.0) < 1e-12
+assert abs(r_dbm.get_column("x")[1] - 30.0) < 1e-12
+
+r_dbm_alias = pdf.dbm(df_u2)
+assert r_dbm_alias.get_column("x") == r_dbm.get_column("x")
+
+df_w = pdf.DataFrame()
+df_w.add_column("p", [0.001, 0.01])
+r_wtodbm = pdf.wtodBm(df_w)
+assert abs(r_wtodbm.get_column("p")[0] - 0.0) < 1e-9
+assert abs(r_wtodbm.get_column("p")[1] - 10.0) < 1e-9
+
+r_wtodbm_alias = pdf.wtodbm(df_w)
+assert r_wtodbm_alias.get_column("p") == r_wtodbm.get_column("p")
+
+df_u3 = pdf.DataFrame()
+df_u3.add_column("v", [2.0, -3.0])
+assert pdf.sqr(df_u3).get_column("v") == [4.0, 9.0]
+
+df_u4 = pdf.DataFrame()
+df_u4.add_column("v", [4.0, 9.0])
+assert pdf.sqrt(df_u4).get_column("v") == [2.0, 3.0]
+
+df_u5 = pdf.DataFrame()
+df_u5.add_column("v", [0.0, 1.0])
+r_exp = pdf.exp(df_u5).get_column("v")
+assert abs(r_exp[0] - 1.0) < 1e-12
+assert abs(r_exp[1] - math.e) < 1e-12
+
+df_u6 = pdf.DataFrame()
+df_u6.add_column("v", [1.0, math.e])
+r_ln = pdf.ln(df_u6).get_column("v")
+assert abs(r_ln[0] - 0.0) < 1e-12
+assert abs(r_ln[1] - 1.0) < 1e-12
+
+df_u7 = pdf.DataFrame()
+df_u7.add_column("v", [1.0, 100.0])
+r_log10 = pdf.log10(df_u7).get_column("v")
+assert abs(r_log10[0] - 0.0) < 1e-12
+assert abs(r_log10[1] - 2.0) < 1e-12
+
 print("PASSED")
 
 # ----------------------------------------------------------------
@@ -1599,6 +1689,12 @@ assert r.get_column("x") == [11.0, 12.0, 13.0]
 # --- r-ops: arr OP df ---
 r = np.array([2.0, 4.0, 6.0]) / df_arr          # 2/1, 4/2, 6/3
 assert r.get_column("x") == [2.0, 2.0, 2.0]
+
+r = df_arr ** np.array([2.0, 3.0, 2.0])
+assert r.get_column("x") == [1.0, 8.0, 9.0]
+
+r = np.array([2.0, 3.0, 4.0]) ** df_arr
+assert r.get_column("x") == [2.0, 9.0, 64.0]
 
 r = np.array([10.0, 10.0, 10.0]) - df_arr
 assert r.get_column("x") == [9.0, 8.0, 7.0]

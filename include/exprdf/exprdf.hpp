@@ -114,13 +114,13 @@ struct ColumnStorageBase {
     virtual ~ColumnStorageBase() = default;
     virtual std::size_t size() const = 0;
     virtual std::string to_string_at(std::size_t row) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_clone() const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_tile(std::size_t n) const = 0;
-    virtual std::shared_ptr<ColumnStorageBase> do_extract_unique() const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_clone() const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_tile(std::size_t n) const = 0;
+    virtual std::unique_ptr<ColumnStorageBase> do_extract_unique() const = 0;
     virtual bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const = 0;
     // Append all elements from `other` into this storage.
     // Throws std::invalid_argument if `other` has a different concrete type.
@@ -156,55 +156,55 @@ struct ColumnStorage : ColumnStorageBase {
         return column_val_to_string<T>(data.at(row));
     }
 
-    std::shared_ptr<ColumnStorageBase> do_clone() const override {
-        return std::make_shared<ColumnStorage<T>>(data);
+    std::unique_ptr<ColumnStorageBase> do_clone() const override {
+        return std::unique_ptr<ColumnStorageBase>(new ColumnStorage<T>(data));
     }
 
-    std::shared_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_slice(std::size_t start, std::size_t end) const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         s->data.assign(data.begin() + start, data.begin() + end);
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
-    std::shared_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_repeat_each(std::size_t n) const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         s->data.reserve(data.size() * n);
         for (const auto& v : data)
             for (std::size_t i = 0; i < n; ++i) s->data.push_back(v);
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
-    std::shared_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_gather(const std::vector<std::size_t>& indices) const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         s->data.reserve(indices.size());
         for (auto i : indices) s->data.push_back(data.at(i));
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
-    std::shared_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_repeat_variable(const std::vector<std::size_t>& counts) const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         for (std::size_t i = 0; i < data.size(); ++i)
             for (std::size_t j = 0; j < counts[i]; ++j) s->data.push_back(data[i]);
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
-    std::shared_ptr<ColumnStorageBase> do_tile(std::size_t n) const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_tile(std::size_t n) const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         s->data.reserve(data.size() * n);
         for (std::size_t i = 0; i < n; ++i)
             for (const auto& v : data) s->data.push_back(v);
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
-    std::shared_ptr<ColumnStorageBase> do_extract_unique() const override {
-        auto s = std::make_shared<ColumnStorage<T>>();
+    std::unique_ptr<ColumnStorageBase> do_extract_unique() const override {
+        std::unique_ptr<ColumnStorage<T>> s(new ColumnStorage<T>());
         for (const auto& v : data) {
             bool found = false;
             for (const auto& u : s->data)
                 if (values_equal(u, v)) { found = true; break; }
             if (!found) s->data.push_back(v);
         }
-        return s;
+        return std::unique_ptr<ColumnStorageBase>(s.release());
     }
 
     bool value_equals_at(std::size_t row_a, const ColumnStorageBase& other, std::size_t row_b) const override {
@@ -230,7 +230,25 @@ public:
     std::vector<std::size_t> shape;    // [] = scalar, {n} = 1-D list, {m,n} = 2-D matrix
                                        // flat storage holds num_rows * elem_per_row() elements
 
-    Column() : tag(DType::Int), storage_(std::make_shared<ColumnStorage<int>>()) {}
+    Column() : tag(DType::Int), storage_(new ColumnStorage<int>()) {}
+
+    Column(const Column& other)
+        : tag(other.tag), quantity(other.quantity), shape(other.shape),
+          storage_(other.storage_ ? other.storage_->do_clone()
+                                  : std::unique_ptr<ColumnStorageBase>(new ColumnStorage<int>())) {}
+
+    Column& operator=(const Column& other) {
+        if (this == &other) return *this;
+        tag = other.tag;
+        quantity = other.quantity;
+        shape = other.shape;
+        storage_ = other.storage_ ? other.storage_->do_clone()
+                                  : std::unique_ptr<ColumnStorageBase>(new ColumnStorage<int>());
+        return *this;
+    }
+
+    Column(Column&&) = default;
+    Column& operator=(Column&&) = default;
 
     // Number of scalar elements per conceptual row (1 for ordinary scalar columns).
     std::size_t elem_per_row() const {
@@ -246,7 +264,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape.clear();
-        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        c.storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
@@ -255,7 +273,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape = {list_size};
-        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        c.storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
@@ -264,7 +282,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape = {mrows, mcols};
-        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        c.storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
@@ -273,7 +291,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape.clear();
-        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        c.storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
@@ -288,7 +306,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape = {list_size};
-        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        c.storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
@@ -328,7 +346,7 @@ public:
         Column c;
         c.tag = DTypeTag<T>::value;
         c.shape = {mrows, mcols};
-        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        c.storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
@@ -685,7 +703,7 @@ public:
     }
 
 private:
-    std::shared_ptr<ColumnStorageBase> storage_;
+    std::unique_ptr<ColumnStorageBase> storage_;
 };
 
 // make_column<T>: construct a Column from a typed vector.
@@ -798,6 +816,39 @@ class DataFrame : public std::enable_shared_from_this<DataFrame> {
 public:
     DataFrame() {}
 
+    DataFrame(const DataFrame& other)
+        : col_order_(other.col_order_),
+          index_dims_(other.index_dims_),
+          mi_ctx_valid_(false),
+          path_(other.path_),
+          type_(other.type_),
+          name_(other.name_),
+          parent_(other.parent_) {
+        for (const auto& name : col_order_) {
+            columns_[name].reset(new Column(other.get_col(name).clone()));
+        }
+    }
+
+    DataFrame& operator=(const DataFrame& other) {
+        if (this == &other) return *this;
+        col_order_ = other.col_order_;
+        index_dims_ = other.index_dims_;
+        mi_ctx_valid_ = false;
+        path_ = other.path_;
+        type_ = other.type_;
+        name_ = other.name_;
+        parent_ = other.parent_;
+
+        columns_.clear();
+        for (const auto& name : col_order_) {
+            columns_[name].reset(new Column(other.get_col(name).clone()));
+        }
+        return *this;
+    }
+
+    DataFrame(DataFrame&&) = default;
+    DataFrame& operator=(DataFrame&&) = default;
+
     // --- Column management ---
 
     template <typename T>
@@ -816,7 +867,7 @@ public:
         col_order_.push_back(name);
         Column col = make_column<T>(data);
         col.quantity = quantity;
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
     }
 
     // Add an already-constructed Column (scalar/list/matrix).
@@ -847,7 +898,7 @@ public:
         col_order_.push_back(name);
         Column copied = col.clone();
         copied.quantity = quantity.empty() ? copied.quantity : quantity;
-        columns_[name] = copied;
+        columns_[name].reset(new Column(std::move(copied)));
     }
 
     template <typename T>
@@ -872,7 +923,7 @@ public:
         col_order_.insert(col_order_.begin() + pos, name);
         Column col = make_column<T>(data);
         col.quantity = quantity;
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
     }
 
     template <typename T>
@@ -894,7 +945,7 @@ public:
             Column col; col.tag = DTypeTag<T>::value; col.quantity = quantity;
             col.shape = {0};
             col_order_.push_back(name);
-            columns_[name] = col;
+            columns_[name].reset(new Column(std::move(col)));
             return;
         }
         std::size_t n = data[0].size();
@@ -918,7 +969,7 @@ public:
         col.quantity = quantity;
         col.shape = {n};
         col_order_.push_back(name);
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
     }
 
     // add_matrix_column: each row holds a fixed mxn matrix of T (row-major).
@@ -934,7 +985,7 @@ public:
             Column col; col.tag = DTypeTag<T>::value; col.quantity = quantity;
             col.shape = {0, 0};
             col_order_.push_back(name);
-            columns_[name] = col;
+            columns_[name].reset(new Column(std::move(col)));
             return;
         }
         if (data[0].empty())
@@ -967,7 +1018,7 @@ public:
         col.quantity = quantity;
         col.shape = {mrows, mcols};
         col_order_.push_back(name);
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
     }
 
     void remove_column(const std::string& name) {
@@ -1097,7 +1148,7 @@ public:
 
     std::size_t num_rows() const {
         if (col_order_.empty()) return 0;
-        const Column& col = columns_.at(col_order_.front());
+        const Column& col = *columns_.at(col_order_.front());
         return col.size() / col.elem_per_row();
     }
 
@@ -1158,9 +1209,9 @@ public:
         auto result = std::make_shared<DataFrame>();
         for (const auto& name : col_order_) {
             auto it = columns_.find(name);
-            Column sliced = it->second.slice(start, end);
+            Column sliced = it->second->slice(start, end);
             result->col_order_.push_back(name);
-            result->columns_[name] = sliced;
+            result->columns_[name].reset(new Column(std::move(sliced)));
         }
         result->type_ = type_;
         return result;
@@ -1219,7 +1270,7 @@ public:
         std::vector<DisplayCol> dcols;
         for (const auto& name : col_order_) {
             auto it = columns_.find(name);
-            const Column& col = it->second;
+            const Column& col = *it->second;
             const auto& sh = col.shape;
             if (sh.empty()) {
                 // Scalar column
@@ -1247,9 +1298,9 @@ public:
             for (std::size_t r = 0; r < display_rows; ++r) {
                 std::size_t len;
                 if (dc.elem == ~std::size_t(0))
-                    len = it->second.to_string(r).size();
+                    len = it->second->to_string(r).size();
                 else
-                    len = it->second.element_to_string(r, dc.elem).size();
+                    len = it->second->element_to_string(r, dc.elem).size();
                 if (len > w) w = len;
             }
             widths.push_back(w);
@@ -1289,8 +1340,8 @@ public:
                 if (c > 0) ss << " | ";
                 auto it = columns_.find(dcols[c].col_name);
                 std::string cell = (dcols[c].elem == ~std::size_t(0))
-                    ? it->second.to_string(r)
-                    : it->second.element_to_string(r, dcols[c].elem);
+                    ? it->second->to_string(r)
+                    : it->second->element_to_string(r, dcols[c].elem);
                 ss << std::setw(static_cast<int>(widths[c])) << std::right << cell;
             }
             ss << "\n";
@@ -1325,7 +1376,7 @@ public:
         for (const auto& name : col_order_) {
             auto it = columns_.find(name);
             result->col_order_.push_back(name);
-            result->columns_[name] = it->second.clone();
+            result->columns_[name].reset(new Column(it->second->clone()));
         }
         result->index_dims_ = index_dims_;
         result->type_ = type_;
@@ -1367,17 +1418,17 @@ public:
             col_order_.push_back(name);
             Column col = make_column<T>(levels);
             col.quantity = quantity;
-            columns_[name] = col;
+            columns_[name].reset(new Column(std::move(col)));
         } else {
             // Expand existing columns: repeat each value new_n times
             for (auto& pair : columns_) {
-                pair.second = pair.second.repeat_each(new_n);
+                *pair.second = pair.second->repeat_each(new_n);
             }
             // Add new column: tile levels old_rows times
             col_order_.push_back(name);
             Column col = make_column<T>(levels);
             col.quantity = quantity;
-            columns_[name] = col.tile(old_rows);
+            columns_[name].reset(new Column(col.tile(old_rows)));
         }
 
         index_dims_.push_back(IndexDim::create_uniform(name, levels, quantity, outer));
@@ -1414,12 +1465,12 @@ public:
 
         // Expand existing columns: repeat each value group_size times
         for (auto& pair : columns_) {
-            pair.second = pair.second.repeat_each(group_size);
+            *pair.second = pair.second->repeat_each(group_size);
         }
         col_order_.push_back(name);
         Column col = make_column<T>(values);
         col.quantity = quantity;
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
 
         index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(old_rows, group_size), quantity));
         mi_ctx_valid_ = false;
@@ -1460,7 +1511,7 @@ public:
 
         // Expand every existing column: row i is repeated lengths[i] times
         for (auto& pair : columns_)
-            pair.second = pair.second.repeat_variable(lengths);
+            *pair.second = pair.second->repeat_variable(lengths);
 
         // Flatten groups and add as new column
         std::vector<T> flat;
@@ -1471,7 +1522,7 @@ public:
         col_order_.push_back(name);
         Column col = make_column<T>(flat);
         col.quantity = quantity;
-        columns_[name] = col;
+        columns_[name].reset(new Column(std::move(col)));
 
         index_dims_.push_back(IndexDim::create_grouped(name, lengths, quantity));
         mi_ctx_valid_ = false;
@@ -1686,7 +1737,7 @@ public:
             }
             if (!is_identity) {
                 for (auto& pair : columns_)
-                    pair.second = pair.second.gather(perm);
+                    *pair.second = pair.second->gather(perm);
             }
             return true;
         };
@@ -2195,7 +2246,7 @@ public:
                 continue;
             auto it = columns_.find(name);
             result->col_order_.push_back(name);
-            result->columns_[name] = it->second.gather(row_indices);
+            result->columns_[name].reset(new Column(it->second->gather(row_indices)));
         }
         for (std::size_t i = 0; i < n_outer; ++i)
             result->index_dims_.push_back(index_dims_[i]);
@@ -2248,12 +2299,12 @@ public:
             // Copy index columns
             for (const auto& dim : index_dims_) {
                 result->col_order_.push_back(dim.name);
-                result->columns_[dim.name] = columns_.find(dim.name)->second.clone();
+                result->columns_[dim.name].reset(new Column(columns_.find(dim.name)->second->clone()));
             }
             result->index_dims_ = index_dims_;
             // Copy dependent column
             result->col_order_.push_back(name);
-            result->columns_[name] = columns_.find(name)->second.clone();
+            result->columns_[name].reset(new Column(columns_.find(name)->second->clone()));
             result->type_ = type_;
             result->parent_ = parent_ref;
             return result;
@@ -2296,7 +2347,7 @@ public:
             for (std::size_t i = 0; i < n_outer; ++i) {
                 const auto& dim = index_dims_[i];
                 result->col_order_.push_back(dim.name);
-                result->columns_[dim.name] = columns_.find(dim.name)->second.gather(row_indices);
+                result->columns_[dim.name].reset(new Column(columns_.find(dim.name)->second->gather(row_indices)));
                 result->index_dims_.push_back(dim);
             }
             result->type_ = type_;
@@ -2442,11 +2493,11 @@ public:
         auto result = std::make_shared<DataFrame>();
         for (const auto& dim : index_dims_) {
             result->col_order_.push_back(dim.name);
-            result->columns_[dim.name] = columns_.find(dim.name)->second.clone();
+            result->columns_[dim.name].reset(new Column(columns_.find(dim.name)->second->clone()));
         }
         result->index_dims_ = index_dims_;
         result->col_order_.push_back(name);
-        result->columns_[name] = col.extract_list_element(idx - 1);
+        result->columns_[name].reset(new Column(col.extract_list_element(idx - 1)));
         result->type_ = type_;
         return result;
     }
@@ -2474,11 +2525,11 @@ public:
         auto result = std::make_shared<DataFrame>();
         for (const auto& dim : index_dims_) {
             result->col_order_.push_back(dim.name);
-            result->columns_[dim.name] = columns_.find(dim.name)->second.clone();
+            result->columns_[dim.name].reset(new Column(columns_.find(dim.name)->second->clone()));
         }
         result->index_dims_ = index_dims_;
         result->col_order_.push_back(name);
-        result->columns_[name] = col.extract_matrix_element(row_idx - 1, col_idx - 1);
+        result->columns_[name].reset(new Column(col.extract_matrix_element(row_idx - 1, col_idx - 1)));
         result->type_ = type_;
         return result;
     }
@@ -2513,7 +2564,7 @@ public:
             for (std::size_t c = 0; c < col_order_.size(); ++c) {
                 if (c > 0) ss << delimiter;
                 auto it = columns_.find(col_order_[c]);
-                ss << escape_csv_field(it->second.to_string(r));
+                ss << escape_csv_field(it->second->to_string(r));
             }
             ss << "\n";
         }
@@ -2537,8 +2588,9 @@ public:
             throw std::invalid_argument("Column '" + new_name + "' already exists");
 
         // Move data in map
-        columns_[new_name] = columns_[old_name];
-        columns_.erase(old_name);
+        auto it_old = columns_.find(old_name);
+        columns_[new_name] = std::move(it_old->second);
+        columns_.erase(it_old);
 
         // Update col_order_
         for (auto& n : col_order_) {
@@ -2635,7 +2687,7 @@ private:
         for (const auto& cname : col_order_) {
             if (cname == ln || cname == drop_col) continue;
             result->col_order_.push_back(cname);
-            result->columns_[cname] = get_col(cname).gather(rep_rows);
+            result->columns_[cname].reset(new Column(get_col(cname).gather(rep_rows)));
         }
 
         // Reduce ln per group, then concatenate into one column.
@@ -2655,7 +2707,7 @@ private:
             final_col = concat_columns(final_col, reduced[g]);
         final_col.quantity = cc.quantity;
         result->col_order_.push_back(ln);
-        result->columns_[ln] = std::move(final_col);
+        result->columns_[ln].reset(new Column(std::move(final_col)));
 
         // Copy outer index dims (drop the last one) and fix up metadata.
         for (std::size_t d = 0; d + 1 < ndims; ++d)
@@ -2779,7 +2831,7 @@ private:
     }
 
     std::vector<std::string> col_order_;          // column names in insertion order
-    std::unordered_map<std::string, Column> columns_; // column data keyed by name
+    std::unordered_map<std::string, std::unique_ptr<Column>> columns_; // column data keyed by name
     std::vector<IndexDim> index_dims_;             // multi-index dimensions (outermost first)
     mutable MultiIndexCtx mi_ctx_cache_;          // lazily built context for multi_index/flat_index
     mutable bool mi_ctx_valid_ = false;           // true iff mi_ctx_cache_ reflects current index_dims_
@@ -2869,14 +2921,14 @@ private:
         auto it = columns_.find(name);
         if (it == columns_.end())
             throw std::invalid_argument("Column '" + name + "' not found");
-        return it->second;
+        return *it->second;
     }
 
     Column& get_col(const std::string& name) {
         auto it = columns_.find(name);
         if (it == columns_.end())
             throw std::invalid_argument("Column '" + name + "' not found");
-        return it->second;
+        return *it->second;
     }
 };
  

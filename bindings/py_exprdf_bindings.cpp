@@ -964,6 +964,9 @@ void bind_types_and_dataframe(py::module_& m) {
         .def("__truediv__", [](const exprdf::DataFrame& self, py::object rhs) {
             return invoke_df_binary("truediv", self, rhs);
         }, py::arg("rhs"), "Element-wise divide on last column (rhs: DataFrame/scalar/1-D numpy array)")
+        .def("__pow__", [](const exprdf::DataFrame& self, py::object rhs) {
+            return invoke_df_binary("pow", self, rhs);
+        }, py::arg("rhs"), "Element-wise power on last column (rhs: DataFrame/scalar/1-D numpy array)")
         .def("__radd__", [](const exprdf::DataFrame& self, py::object lhs) {
             return invoke_df_binary("radd", self, lhs);
         }, py::arg("lhs"), "Element-wise reverse add on last column (lhs: DataFrame/scalar/1-D numpy array)")
@@ -976,6 +979,9 @@ void bind_types_and_dataframe(py::module_& m) {
         .def("__rtruediv__", [](const exprdf::DataFrame& self, py::object lhs) {
             return invoke_df_binary("rtruediv", self, lhs);
         }, py::arg("lhs"), "Element-wise reverse divide on last column (lhs: DataFrame/scalar/1-D numpy array)")
+        .def("__rpow__", [](const exprdf::DataFrame& self, py::object lhs) {
+            return invoke_df_binary("rpow", self, lhs);
+        }, py::arg("lhs"), "Element-wise reverse power on last column (lhs: DataFrame/scalar/1-D numpy array)")
         // unary negation
         .def("__neg__", [](const exprdf::DataFrame& self) {
             return invoke_df_unary("neg", self);

@@ -239,27 +239,261 @@ public:
         return r;
     }
 
-    // Named construction helpers -- prefer the generic make_column<T>() free function.
+    // Typed constructors: scalar/list/matrix, each with empty and value-initialized variants.
+    template <typename T>
+    static Column empty_scalar() {
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape.clear();
+        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        return c;
+    }
+
+    template <typename T>
+    static Column empty_list(std::size_t list_size) {
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape = {list_size};
+        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        return c;
+    }
+
+    template <typename T>
+    static Column empty_matrix(std::size_t mrows, std::size_t mcols) {
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape = {mrows, mcols};
+        c.storage_ = std::make_shared<ColumnStorage<T>>();
+        return c;
+    }
+
+    template <typename T>
+    static Column from_scalar(const std::vector<T>& values) {
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape.clear();
+        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        return c;
+    }
+
+    // Flat list initialiser; `values.size()` must be a multiple of list_size.
+    template <typename T>
+    static Column from_list_flat(const std::vector<T>& values, std::size_t list_size) {
+        if (list_size == 0)
+            throw std::invalid_argument("from_list_flat: list_size cannot be zero");
+        if (values.size() % list_size != 0)
+            throw std::invalid_argument(
+                "from_list_flat: values.size() must be a multiple of list_size");
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape = {list_size};
+        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        return c;
+    }
+
+    // Structured list initialiser (row-major already by structure).
+    template <typename T>
+    static Column from_list(const std::vector<std::vector<T>>& rows) {
+        if (rows.empty())
+            throw std::invalid_argument("from_list: rows cannot be empty");
+        const std::size_t list_size = rows[0].size();
+        if (list_size == 0)
+            throw std::invalid_argument("from_list: inner list cannot be empty");
+
+        std::vector<T> flat;
+        flat.reserve(rows.size() * list_size);
+        for (const auto& row : rows) {
+            if (row.size() != list_size)
+                throw std::invalid_argument(
+                    "from_list: all rows must have the same list length");
+            flat.insert(flat.end(), row.begin(), row.end());
+        }
+        return from_list_flat<T>(flat, list_size);
+    }
+
+    // Flat matrix initialiser; `values.size()` must be a multiple of mrows*mcols.
+    template <typename T>
+    static Column from_matrix_flat(const std::vector<T>& values,
+                                   std::size_t mrows,
+                                   std::size_t mcols) {
+        if (mrows == 0 || mcols == 0)
+            throw std::invalid_argument(
+                "from_matrix_flat: mrows and mcols must be non-zero");
+        const std::size_t elem_per_row = mrows * mcols;
+        if (values.size() % elem_per_row != 0)
+            throw std::invalid_argument(
+                "from_matrix_flat: values.size() must be a multiple of mrows*mcols");
+
+        Column c;
+        c.tag = DTypeTag<T>::value;
+        c.shape = {mrows, mcols};
+        c.storage_ = std::make_shared<ColumnStorage<T>>(values);
+        return c;
+    }
+
+    // Structured matrix initialiser: [row][i][j].
+    template <typename T>
+    static Column from_matrix(const std::vector<std::vector<std::vector<T>>>& rows) {
+        if (rows.empty())
+            throw std::invalid_argument("from_matrix: rows cannot be empty");
+        if (rows[0].empty())
+            throw std::invalid_argument("from_matrix: matrix row count cannot be zero");
+
+        const std::size_t mrows = rows[0].size();
+        const std::size_t mcols = rows[0][0].size();
+        if (mcols == 0)
+            throw std::invalid_argument("from_matrix: matrix column count cannot be zero");
+
+        std::vector<T> flat;
+        flat.reserve(rows.size() * mrows * mcols);
+        for (const auto& mat : rows) {
+            if (mat.size() != mrows)
+                throw std::invalid_argument(
+                    "from_matrix: all matrices must have the same row count");
+            for (const auto& row : mat) {
+                if (row.size() != mcols)
+                    throw std::invalid_argument(
+                        "from_matrix: all matrices must have the same column count");
+                flat.insert(flat.end(), row.begin(), row.end());
+            }
+        }
+        return from_matrix_flat<T>(flat, mrows, mcols);
+    }
+
+    // Backward-compatible aliases for scalar construction.
     static Column from_int(const std::vector<int>& v) {
-        Column c; c.tag = DType::Int;
-        c.storage_ = std::make_shared<ColumnStorage<int>>(v); return c;
+        return from_scalar<int>(v);
     }
     static Column from_double(const std::vector<double>& v) {
-        Column c; c.tag = DType::Double;
-        c.storage_ = std::make_shared<ColumnStorage<double>>(v); return c;
+        return from_scalar<double>(v);
     }
     static Column from_string(const std::vector<std::string>& v) {
-        Column c; c.tag = DType::String;
-        c.storage_ = std::make_shared<ColumnStorage<std::string>>(v); return c;
+        return from_scalar<std::string>(v);
     }
     static Column from_complex(const std::vector<std::complex<double>>& v) {
-        Column c; c.tag = DType::Complex;
-        c.storage_ = std::make_shared<ColumnStorage<std::complex<double>>>(v); return c;
+        return from_scalar<std::complex<double>>(v);
     }
 
     std::size_t size() const { return storage_->size(); }
 
+    // Number of conceptual rows.
+    std::size_t num_rows() const {
+        const std::size_t epr = elem_per_row();
+        if (epr == 0) {
+            if (size() != 0)
+                throw std::invalid_argument(
+                    "num_rows: invalid column layout (elem_per_row=0 but storage is non-empty)");
+            return 0;
+        }
+        if (size() % epr != 0)
+            throw std::invalid_argument(
+                "num_rows: storage size is not divisible by elem_per_row");
+        return size() / epr;
+    }
+
     std::string dtype_name() const { return dtype_to_string(tag); }
+
+    // --- Typed get/set helpers for scalar/list/matrix columns ---
+
+    // get<T>(row): scalar access.
+    template <typename T>
+    T get(std::size_t row) const {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "get: type mismatch, stored as " + dtype_name());
+        if (!shape.empty())
+            throw std::invalid_argument(
+                "get(row): column is a list/matrix; use get(row, k) or get(row, i, j)");
+        return storage_->as<T>().at(row);
+    }
+
+    // get<T>(row, k): list access, k is 1-based.
+    template <typename T>
+    T get(std::size_t row, std::size_t k) const {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "get(list): type mismatch, stored as " + dtype_name());
+        if (shape.size() != 1)
+            throw std::invalid_argument("get(list): column is not a 1-D list column");
+        const std::size_t n = shape[0];
+        if (k < 1 || k > n)
+            throw std::out_of_range("List index " + std::to_string(k) +
+                                    " out of range (1.." + std::to_string(n) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        return storage_->as<T>()[row * n + (k - 1)];
+    }
+
+    // get<T>(row, i, j): matrix access, i/j are 1-based.
+    template <typename T>
+    T get(std::size_t row, std::size_t i, std::size_t j) const {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "get(matrix): type mismatch, stored as " + dtype_name());
+        if (shape.size() != 2)
+            throw std::invalid_argument("get(matrix): column is not a 2-D matrix column");
+        const std::size_t mrows = shape[0];
+        const std::size_t mcols = shape[1];
+        if (i < 1 || i > mrows)
+            throw std::out_of_range("Row index " + std::to_string(i) +
+                                    " out of range (1.." + std::to_string(mrows) + ")");
+        if (j < 1 || j > mcols)
+            throw std::out_of_range("Col index " + std::to_string(j) +
+                                    " out of range (1.." + std::to_string(mcols) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        return storage_->as<T>()[row * mrows * mcols + (i - 1) * mcols + (j - 1)];
+    }
+
+    // set<T>(row, value): scalar write.
+    template <typename T>
+    void set(std::size_t row, const T& value) {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "set: type mismatch, stored as " + dtype_name());
+        if (!shape.empty())
+            throw std::invalid_argument(
+                "set(row, value): column is a list/matrix; use set(row, k, v) or set(row, i, j, v)");
+        storage_->as<T>().at(row) = value;
+    }
+
+    // set<T>(row, k, value): list write, k is 1-based.
+    template <typename T>
+    void set(std::size_t row, std::size_t k, const T& value) {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "set(list): type mismatch, stored as " + dtype_name());
+        if (shape.size() != 1)
+            throw std::invalid_argument("set(list): column is not a 1-D list column");
+        const std::size_t n = shape[0];
+        if (k < 1 || k > n)
+            throw std::out_of_range("List index " + std::to_string(k) +
+                                    " out of range (1.." + std::to_string(n) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        storage_->as<T>()[row * n + (k - 1)] = value;
+    }
+
+    // set<T>(row, i, j, value): matrix write, i/j are 1-based.
+    template <typename T>
+    void set(std::size_t row, std::size_t i, std::size_t j, const T& value) {
+        if (tag != DTypeTag<T>::value)
+            throw std::invalid_argument(
+                "set(matrix): type mismatch, stored as " + dtype_name());
+        if (shape.size() != 2)
+            throw std::invalid_argument("set(matrix): column is not a 2-D matrix column");
+        const std::size_t mrows = shape[0];
+        const std::size_t mcols = shape[1];
+        if (i < 1 || i > mrows)
+            throw std::out_of_range("Row index " + std::to_string(i) +
+                                    " out of range (1.." + std::to_string(mrows) + ")");
+        if (j < 1 || j > mcols)
+            throw std::out_of_range("Col index " + std::to_string(j) +
+                                    " out of range (1.." + std::to_string(mcols) + ")");
+        if (row >= num_rows())
+            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
+        storage_->as<T>()[row * mrows * mcols + (i - 1) * mcols + (j - 1)] = value;
+    }
 
     // Display a conceptual row as a string.
     // For scalar columns this returns the element at `row`; for list/matrix columns
@@ -329,6 +563,73 @@ public:
         c.storage_ = storage_->do_tile(n); return c;
     }
 
+    // Append another column with identical runtime type and shape.
+    void append(const Column& other) {
+        if (tag != other.tag) {
+            throw std::invalid_argument(
+                "append: type mismatch between source and destination column");
+        }
+        if (shape != other.shape) {
+            throw std::invalid_argument("append: shape mismatch between columns");
+        }
+        storage_->do_append(*other.storage_);
+    }
+
+    // Push one scalar value to a scalar column.
+    template <typename T>
+    void push(const T& value) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push: value type mismatches column dtype");
+        }
+        if (!shape.empty()) {
+            throw std::invalid_argument(
+                "push(value): only valid for scalar columns; use push(list/matrix) for shaped columns");
+        }
+        storage_->as<T>().push_back(value);
+    }
+
+    // Push one list row to a list column.
+    template <typename T>
+    void push(const std::vector<T>& row) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push(list): value type mismatches column dtype");
+        }
+        if (shape.size() != 1) {
+            throw std::invalid_argument("push(list): column is not a 1-D list column");
+        }
+        if (row.size() != shape[0]) {
+            throw std::invalid_argument(
+                "push(list): list length mismatch with column shape");
+        }
+        auto& dst = storage_->as<T>();
+        dst.insert(dst.end(), row.begin(), row.end());
+    }
+
+    // Push one matrix row to a matrix column.
+    template <typename T>
+    void push(const std::vector<std::vector<T>>& mat) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push(matrix): value type mismatches column dtype");
+        }
+        if (shape.size() != 2) {
+            throw std::invalid_argument("push(matrix): column is not a 2-D matrix column");
+        }
+        const std::size_t mrows = shape[0];
+        const std::size_t mcols = shape[1];
+        if (mat.size() != mrows) {
+            throw std::invalid_argument(
+                "push(matrix): matrix row count mismatch with column shape");
+        }
+        auto& dst = storage_->as<T>();
+        for (const auto& row : mat) {
+            if (row.size() != mcols) {
+                throw std::invalid_argument(
+                    "push(matrix): matrix column count mismatch with column shape");
+            }
+            dst.insert(dst.end(), row.begin(), row.end());
+        }
+    }
+
     // Extract unique values preserving first-appearance order
     Column extract_unique() const {
         Column c; c.tag = tag; c.quantity = quantity;
@@ -391,10 +692,10 @@ private:
 template <typename T>
 inline Column make_column(const std::vector<T>& data);
 
-template <> inline Column make_column<int>(const std::vector<int>& v)                                   { return Column::from_int(v); }
-template <> inline Column make_column<double>(const std::vector<double>& v)                              { return Column::from_double(v); }
-template <> inline Column make_column<std::string>(const std::vector<std::string>& v)                    { return Column::from_string(v); }
-template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return Column::from_complex(v); }
+template <> inline Column make_column<int>(const std::vector<int>& v)                                   { return Column::from_scalar<int>(v); }
+template <> inline Column make_column<double>(const std::vector<double>& v)                              { return Column::from_scalar<double>(v); }
+template <> inline Column make_column<std::string>(const std::vector<std::string>& v)                    { return Column::from_scalar<std::string>(v); }
+template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return Column::from_scalar<std::complex<double>>(v); }
 
 // ============================================================
 // IndexKind / IndexDim -- multi-index dimension descriptors
@@ -515,6 +816,37 @@ public:
         Column col = make_column<T>(data);
         col.quantity = quantity;
         columns_[name] = col;
+    }
+
+    // Add an already-constructed Column (scalar/list/matrix).
+    // The input column is copied into the DataFrame storage.
+    void add_column(const std::string& name, const Column& col,
+                    const std::string& quantity = "") {
+        if (has_column(name)) {
+            throw std::invalid_argument("Column '" + name + "' already exists");
+        }
+
+        const std::size_t epr = col.elem_per_row();
+        if (epr == 0 && col.size() != 0) {
+            throw std::invalid_argument(
+                "Column '" + name + "' has invalid shape with zero elements per row");
+        }
+        const std::size_t col_rows = (epr == 0) ? 0 : (col.size() / epr);
+        if (epr != 0 && col.size() % epr != 0) {
+            throw std::invalid_argument(
+                "Column '" + name + "' storage size is not divisible by elem_per_row");
+        }
+
+        if (!columns_.empty() && col_rows != num_rows()) {
+            throw std::invalid_argument(
+                "Column '" + name + "' has " + std::to_string(col_rows) +
+                " rows, expected " + std::to_string(num_rows()));
+        }
+
+        col_order_.push_back(name);
+        Column copied = col.clone();
+        copied.quantity = quantity.empty() ? copied.quantity : quantity;
+        columns_[name] = copied;
     }
 
     template <typename T>
@@ -776,89 +1108,43 @@ public:
     template <typename T>
     T at(const std::string& col, std::size_t row) const {
         const Column& c = get_col(col);
-        if (c.elem_per_row() != 1)
-            throw std::invalid_argument(
-                "Column '" + col + "' is a list/matrix column; "
-                "use at(col, row, k) for list or at(col, row, i, j) for matrix");
-        return get_column_as<T>(col).at(row);
+        return c.get<T>(row);
     }
 
     // at<T>(col, row, k): read the k-th element (1-based) from a 1-D list column.
     template <typename T>
     T at(const std::string& col, std::size_t row, std::size_t k) const {
         const Column& c = get_col(col);
-        if (c.shape.size() != 1)
-            throw std::invalid_argument("Column '" + col + "' is not a 1-D list column");
-        std::size_t n = c.shape[0];
-        if (k < 1 || k > n)
-            throw std::out_of_range("List index " + std::to_string(k) +
-                                    " out of range (1.." + std::to_string(n) + ")");
-        if (row >= num_rows())
-            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
-        return get_column_as<T>(col)[row * n + (k - 1)];
+        return c.get<T>(row, k);
     }
 
     // at<T>(col, row, i, j): read the (i,j)-th element (1-based) from a 2-D matrix column.
     template <typename T>
     T at(const std::string& col, std::size_t row, std::size_t i, std::size_t j) const {
         const Column& c = get_col(col);
-        if (c.shape.size() != 2)
-            throw std::invalid_argument("Column '" + col + "' is not a 2-D matrix column");
-        std::size_t mrows = c.shape[0], mcols = c.shape[1];
-        if (i < 1 || i > mrows)
-            throw std::out_of_range("Row index " + std::to_string(i) +
-                                    " out of range (1.." + std::to_string(mrows) + ")");
-        if (j < 1 || j > mcols)
-            throw std::out_of_range("Col index " + std::to_string(j) +
-                                    " out of range (1.." + std::to_string(mcols) + ")");
-        if (row >= num_rows())
-            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
-        return get_column_as<T>(col)[row * mrows * mcols + (i - 1) * mcols + (j - 1)];
+        return c.get<T>(row, i, j);
     }
 
     // set<T>(col, row, value): write scalar element at conceptual row (0-based).
     // Throws for list/matrix columns - use set(col, row, k, v) or set(col, row, i, j, v).
     template <typename T>
     void set(const std::string& col, std::size_t row, const T& value) {
-        const Column& c = get_col(col);
-        if (c.elem_per_row() != 1)
-            throw std::invalid_argument(
-                "Column '" + col + "' is a list/matrix column; "
-                "use set(col, row, k, v) for list or set(col, row, i, j, v) for matrix");
-        get_column_as<T>(col).at(row) = value;
+        Column& c = get_col(col);
+        c.set<T>(row, value);
     }
 
     // set<T>(col, row, k, value): write the k-th element (1-based) in a 1-D list column.
     template <typename T>
     void set(const std::string& col, std::size_t row, std::size_t k, const T& value) {
         Column& c = get_col(col);
-        if (c.shape.size() != 1)
-            throw std::invalid_argument("Column '" + col + "' is not a 1-D list column");
-        std::size_t n = c.shape[0];
-        if (k < 1 || k > n)
-            throw std::out_of_range("List index " + std::to_string(k) +
-                                    " out of range (1.." + std::to_string(n) + ")");
-        if (row >= num_rows())
-            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
-        get_column_as<T>(col)[row * n + (k - 1)] = value;
+        c.set<T>(row, k, value);
     }
 
     // set<T>(col, row, i, j, value): write the (i,j)-th element (1-based) in a 2-D matrix column.
     template <typename T>
     void set(const std::string& col, std::size_t row, std::size_t i, std::size_t j, const T& value) {
         Column& c = get_col(col);
-        if (c.shape.size() != 2)
-            throw std::invalid_argument("Column '" + col + "' is not a 2-D matrix column");
-        std::size_t mrows = c.shape[0], mcols = c.shape[1];
-        if (i < 1 || i > mrows)
-            throw std::out_of_range("Row index " + std::to_string(i) +
-                                    " out of range (1.." + std::to_string(mrows) + ")");
-        if (j < 1 || j > mcols)
-            throw std::out_of_range("Col index " + std::to_string(j) +
-                                    " out of range (1.." + std::to_string(mcols) + ")");
-        if (row >= num_rows())
-            throw std::out_of_range("Row " + std::to_string(row) + " out of range");
-        get_column_as<T>(col)[row * mrows * mcols + (i - 1) * mcols + (j - 1)] = value;
+        c.set<T>(row, i, j, value);
     }
 
     // --- Row slicing ---
@@ -2258,7 +2544,8 @@ public:
             throw std::out_of_range(
                 "Column index " + std::to_string(index) +
                 " out of range (size=" + std::to_string(col_order_.size()) + ")");
-        return rename(col_order_[index], new_name);
+        std::string old_name = col_order_[index];
+        return rename(old_name, new_name);
     }
 
     DataFrame& rename_last(const std::string& new_name) {

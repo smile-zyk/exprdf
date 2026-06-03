@@ -260,59 +260,59 @@ public:
 
     // Typed constructors: scalar/list/matrix, each with empty and value-initialized variants.
     template <typename T>
-    static Column empty_scalar() {
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape.clear();
-        c.storage_.reset(new ColumnStorage<T>());
+    static std::unique_ptr<Column> empty_scalar() {
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape.clear();
+        c->storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
     template <typename T>
-    static Column empty_list(std::size_t list_size) {
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape = {list_size};
-        c.storage_.reset(new ColumnStorage<T>());
+    static std::unique_ptr<Column> empty_list(std::size_t list_size) {
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape = {list_size};
+        c->storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
     template <typename T>
-    static Column empty_matrix(std::size_t mrows, std::size_t mcols) {
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape = {mrows, mcols};
-        c.storage_.reset(new ColumnStorage<T>());
+    static std::unique_ptr<Column> empty_matrix(std::size_t mrows, std::size_t mcols) {
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape = {mrows, mcols};
+        c->storage_.reset(new ColumnStorage<T>());
         return c;
     }
 
     template <typename T>
-    static Column from_scalar(const std::vector<T>& values) {
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape.clear();
-        c.storage_.reset(new ColumnStorage<T>(values));
+    static std::unique_ptr<Column> from_scalar(const std::vector<T>& values) {
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape.clear();
+        c->storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
     // Flat list initialiser; `values.size()` must be a multiple of list_size.
     template <typename T>
-    static Column from_list_flat(const std::vector<T>& values, std::size_t list_size) {
+    static std::unique_ptr<Column> from_list_flat(const std::vector<T>& values, std::size_t list_size) {
         if (list_size == 0)
             throw std::invalid_argument("from_list_flat: list_size cannot be zero");
         if (values.size() % list_size != 0)
             throw std::invalid_argument(
                 "from_list_flat: values.size() must be a multiple of list_size");
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape = {list_size};
-        c.storage_.reset(new ColumnStorage<T>(values));
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape = {list_size};
+        c->storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
     // Structured list initialiser (row-major already by structure).
     template <typename T>
-    static Column from_list(const std::vector<std::vector<T>>& rows) {
+    static std::unique_ptr<Column> from_list(const std::vector<std::vector<T>>& rows) {
         if (rows.empty())
             throw std::invalid_argument("from_list: rows cannot be empty");
         const std::size_t list_size = rows[0].size();
@@ -332,9 +332,9 @@ public:
 
     // Flat matrix initialiser; `values.size()` must be a multiple of mrows*mcols.
     template <typename T>
-    static Column from_matrix_flat(const std::vector<T>& values,
-                                   std::size_t mrows,
-                                   std::size_t mcols) {
+    static std::unique_ptr<Column> from_matrix_flat(const std::vector<T>& values,
+                                                    std::size_t mrows,
+                                                    std::size_t mcols) {
         if (mrows == 0 || mcols == 0)
             throw std::invalid_argument(
                 "from_matrix_flat: mrows and mcols must be non-zero");
@@ -343,16 +343,16 @@ public:
             throw std::invalid_argument(
                 "from_matrix_flat: values.size() must be a multiple of mrows*mcols");
 
-        Column c;
-        c.tag = DTypeTag<T>::value;
-        c.shape = {mrows, mcols};
-        c.storage_.reset(new ColumnStorage<T>(values));
+        std::unique_ptr<Column> c(new Column());
+        c->tag = DTypeTag<T>::value;
+        c->shape = {mrows, mcols};
+        c->storage_.reset(new ColumnStorage<T>(values));
         return c;
     }
 
     // Structured matrix initialiser: [row][i][j].
     template <typename T>
-    static Column from_matrix(const std::vector<std::vector<std::vector<T>>>& rows) {
+    static std::unique_ptr<Column> from_matrix(const std::vector<std::vector<std::vector<T>>>& rows) {
         if (rows.empty())
             throw std::invalid_argument("from_matrix: rows cannot be empty");
         if (rows[0].empty())
@@ -381,8 +381,8 @@ public:
 
     // Merge K scalar columns (same dtype, same row count) into one list column of shape {K}.
     // The resulting list order follows the input column order.
-    static Column combine_scalars_to_list(const std::vector<Column>& columns,
-                                          const std::string& quantity = "") {
+    static std::unique_ptr<Column> combine_scalars_to_list(const std::vector<Column>& columns,
+                                                           const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_scalars_to_list: columns cannot be empty");
 
@@ -400,7 +400,7 @@ public:
                     "combine_scalars_to_list: all columns must have the same row count");
         }
 
-        Column out;
+        std::unique_ptr<Column> out;
         switch (t) {
             case DType::Int:
                 out = combine_scalars_to_list_typed<int>(columns);
@@ -415,14 +415,14 @@ public:
                 out = combine_scalars_to_list_typed<std::complex<double>>(columns);
                 break;
         }
-        out.quantity = quantity;
+            out->quantity = quantity;
         return out;
     }
 
     // Merge K list columns (same dtype, same row count, same list length L)
     // into one matrix column of shape {K, L}.
-    static Column combine_lists_to_matrix(const std::vector<Column>& columns,
-                                          const std::string& quantity = "") {
+    static std::unique_ptr<Column> combine_lists_to_matrix(const std::vector<Column>& columns,
+                                                           const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_lists_to_matrix: columns cannot be empty");
 
@@ -448,7 +448,7 @@ public:
                     "combine_lists_to_matrix: all columns must have the same row count");
         }
 
-        Column out;
+        std::unique_ptr<Column> out;
         switch (t) {
             case DType::Int:
                 out = combine_lists_to_matrix_typed<int>(columns);
@@ -463,16 +463,16 @@ public:
                 out = combine_lists_to_matrix_typed<std::complex<double>>(columns);
                 break;
         }
-        out.quantity = quantity;
+            out->quantity = quantity;
         return out;
     }
 
     // Merge scalar columns into one matrix column.
     // Extra shape info is required: columns.size() must equal mrows * mcols.
-    static Column combine_scalars_to_matrix(const std::vector<Column>& columns,
-                                            std::size_t mrows,
-                                            std::size_t mcols,
-                                            const std::string& quantity = "") {
+    static std::unique_ptr<Column> combine_scalars_to_matrix(const std::vector<Column>& columns,
+                                                             std::size_t mrows,
+                                                             std::size_t mcols,
+                                                             const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_scalars_to_matrix: columns cannot be empty");
         if (mrows == 0 || mcols == 0)
@@ -496,7 +496,7 @@ public:
                     "combine_scalars_to_matrix: all columns must have the same row count");
         }
 
-        Column out;
+        std::unique_ptr<Column> out;
         switch (t) {
             case DType::Int:
                 out = combine_scalars_to_matrix_typed<int>(columns, mrows, mcols);
@@ -511,21 +511,21 @@ public:
                 out = combine_scalars_to_matrix_typed<std::complex<double>>(columns, mrows, mcols);
                 break;
         }
-        out.quantity = quantity;
+        out->quantity = quantity;
         return out;
     }
 
     // Backward-compatible aliases for scalar construction.
-    static Column from_int(const std::vector<int>& v) {
+    static std::unique_ptr<Column> from_int(const std::vector<int>& v) {
         return from_scalar<int>(v);
     }
-    static Column from_double(const std::vector<double>& v) {
+    static std::unique_ptr<Column> from_double(const std::vector<double>& v) {
         return from_scalar<double>(v);
     }
-    static Column from_string(const std::vector<std::string>& v) {
+    static std::unique_ptr<Column> from_string(const std::vector<std::string>& v) {
         return from_scalar<std::string>(v);
     }
-    static Column from_complex(const std::vector<std::complex<double>>& v) {
+    static std::unique_ptr<Column> from_complex(const std::vector<std::complex<double>>& v) {
         return from_scalar<std::complex<double>>(v);
     }
 
@@ -738,23 +738,23 @@ public:
         }
         if (!shape.empty()) {
             throw std::invalid_argument(
-                "push(value): only valid for scalar columns; use push(list/matrix) for shaped columns");
+                "push(value): only valid for scalar columns; use push_list/push_matrix for shaped columns");
         }
         storage_->as<T>().push_back(value);
     }
 
     // Push one list row to a list column.
     template <typename T>
-    void push(const std::vector<T>& row) {
+    void push_list(const std::vector<T>& row) {
         if (tag != DTypeTag<T>::value) {
-            throw std::invalid_argument("push(list): value type mismatches column dtype");
+            throw std::invalid_argument("push_list: value type mismatches column dtype");
         }
         if (shape.size() != 1) {
-            throw std::invalid_argument("push(list): column is not a 1-D list column");
+            throw std::invalid_argument("push_list: column is not a 1-D list column");
         }
         if (row.size() != shape[0]) {
             throw std::invalid_argument(
-                "push(list): list length mismatch with column shape");
+                "push_list: list length mismatch with column shape");
         }
         auto& dst = storage_->as<T>();
         dst.insert(dst.end(), row.begin(), row.end());
@@ -762,26 +762,88 @@ public:
 
     // Push one matrix row to a matrix column.
     template <typename T>
-    void push(const std::vector<std::vector<T>>& mat) {
+    void push_matrix(const std::vector<std::vector<T>>& mat) {
         if (tag != DTypeTag<T>::value) {
-            throw std::invalid_argument("push(matrix): value type mismatches column dtype");
+            throw std::invalid_argument("push_matrix: value type mismatches column dtype");
         }
         if (shape.size() != 2) {
-            throw std::invalid_argument("push(matrix): column is not a 2-D matrix column");
+            throw std::invalid_argument("push_matrix: column is not a 2-D matrix column");
         }
         const std::size_t mrows = shape[0];
         const std::size_t mcols = shape[1];
         if (mat.size() != mrows) {
             throw std::invalid_argument(
-                "push(matrix): matrix row count mismatch with column shape");
+                "push_matrix: matrix row count mismatch with column shape");
         }
         auto& dst = storage_->as<T>();
         for (const auto& row : mat) {
             if (row.size() != mcols) {
                 throw std::invalid_argument(
-                    "push(matrix): matrix column count mismatch with column shape");
+                    "push_matrix: matrix column count mismatch with column shape");
             }
             dst.insert(dst.end(), row.begin(), row.end());
+        }
+    }
+
+    // Push multiple scalar rows to a scalar column.
+    template <typename T>
+    void push_rows(const std::vector<T>& values) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push_rows(scalar): value type mismatches column dtype");
+        }
+        if (!shape.empty()) {
+            throw std::invalid_argument(
+                "push_rows(scalar): only valid for scalar columns");
+        }
+        auto& dst = storage_->as<T>();
+        dst.insert(dst.end(), values.begin(), values.end());
+    }
+
+    // Push multiple list rows to a list column.
+    template <typename T>
+    void push_list_rows(const std::vector<std::vector<T>>& rows) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push_list_rows: value type mismatches column dtype");
+        }
+        if (shape.size() != 1) {
+            throw std::invalid_argument("push_list_rows: column is not a 1-D list column");
+        }
+        const std::size_t n = shape[0];
+        auto& dst = storage_->as<T>();
+        for (const auto& row : rows) {
+            if (row.size() != n) {
+                throw std::invalid_argument(
+                    "push_list_rows: list length mismatch with column shape");
+            }
+            dst.insert(dst.end(), row.begin(), row.end());
+        }
+    }
+
+    // Push multiple matrix rows to a matrix column.
+    template <typename T>
+    void push_matrix_rows(const std::vector<std::vector<std::vector<T>>>& mats) {
+        if (tag != DTypeTag<T>::value) {
+            throw std::invalid_argument("push_matrix_rows: value type mismatches column dtype");
+        }
+        if (shape.size() != 2) {
+            throw std::invalid_argument(
+                "push_matrix_rows: column is not a 2-D matrix column");
+        }
+        const std::size_t mrows = shape[0];
+        const std::size_t mcols = shape[1];
+        auto& dst = storage_->as<T>();
+        for (const auto& mat : mats) {
+            if (mat.size() != mrows) {
+                throw std::invalid_argument(
+                    "push_matrix_rows: matrix row count mismatch with column shape");
+            }
+            for (const auto& row : mat) {
+                if (row.size() != mcols) {
+                    throw std::invalid_argument(
+                        "push_matrix_rows: matrix column count mismatch with column shape");
+                }
+                dst.insert(dst.end(), row.begin(), row.end());
+            }
         }
     }
 
@@ -840,7 +902,7 @@ public:
 
 private:
     template <typename T>
-    static Column combine_scalars_to_list_typed(const std::vector<Column>& columns) {
+    static std::unique_ptr<Column> combine_scalars_to_list_typed(const std::vector<Column>& columns) {
         const std::size_t nrows = columns[0].num_rows();
         const std::size_t list_size = columns.size();
         std::vector<T> flat;
@@ -854,7 +916,7 @@ private:
     }
 
     template <typename T>
-    static Column combine_lists_to_matrix_typed(const std::vector<Column>& columns) {
+    static std::unique_ptr<Column> combine_lists_to_matrix_typed(const std::vector<Column>& columns) {
         const std::size_t nrows = columns[0].num_rows();
         const std::size_t mrows = columns.size();
         const std::size_t mcols = columns[0].shape[0];
@@ -872,9 +934,9 @@ private:
     }
 
     template <typename T>
-    static Column combine_scalars_to_matrix_typed(const std::vector<Column>& columns,
-                                                  std::size_t mrows,
-                                                  std::size_t mcols) {
+    static std::unique_ptr<Column> combine_scalars_to_matrix_typed(const std::vector<Column>& columns,
+                                                                   std::size_t mrows,
+                                                                   std::size_t mcols) {
         const std::size_t nrows = columns[0].num_rows();
         std::vector<T> flat;
         flat.reserve(nrows * mrows * mcols);
@@ -893,10 +955,10 @@ private:
 template <typename T>
 inline Column make_column(const std::vector<T>& data);
 
-template <> inline Column make_column<int>(const std::vector<int>& v)                                   { return Column::from_scalar<int>(v); }
-template <> inline Column make_column<double>(const std::vector<double>& v)                              { return Column::from_scalar<double>(v); }
-template <> inline Column make_column<std::string>(const std::vector<std::string>& v)                    { return Column::from_scalar<std::string>(v); }
-template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return Column::from_scalar<std::complex<double>>(v); }
+template <> inline Column make_column<int>(const std::vector<int>& v)                                   { return *Column::from_scalar<int>(v); }
+template <> inline Column make_column<double>(const std::vector<double>& v)                              { return *Column::from_scalar<double>(v); }
+template <> inline Column make_column<std::string>(const std::vector<std::string>& v)                    { return *Column::from_scalar<std::string>(v); }
+template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return *Column::from_scalar<std::complex<double>>(v); }
 
 // ============================================================
 // IndexKind / IndexDim -- multi-index dimension descriptors
@@ -1053,20 +1115,23 @@ public:
     }
 
     // Add an already-constructed Column (scalar/list/matrix).
-    // The input column is copied into the DataFrame storage.
-    void add_column(const std::string& name, const Column& col,
+    // Ownership of the input column is moved into DataFrame.
+    void add_column(const std::string& name, std::unique_ptr<Column> col,
                     const std::string& quantity = "") {
+        if (!col) {
+            throw std::invalid_argument("Column pointer is null");
+        }
         if (has_column(name)) {
             throw std::invalid_argument("Column '" + name + "' already exists");
         }
 
-        const std::size_t epr = col.elem_per_row();
-        if (epr == 0 && col.size() != 0) {
+        const std::size_t epr = col->elem_per_row();
+        if (epr == 0 && col->size() != 0) {
             throw std::invalid_argument(
                 "Column '" + name + "' has invalid shape with zero elements per row");
         }
-        const std::size_t col_rows = (epr == 0) ? 0 : (col.size() / epr);
-        if (epr != 0 && col.size() % epr != 0) {
+        const std::size_t col_rows = (epr == 0) ? 0 : (col->size() / epr);
+        if (epr != 0 && col->size() % epr != 0) {
             throw std::invalid_argument(
                 "Column '" + name + "' storage size is not divisible by elem_per_row");
         }
@@ -1078,9 +1143,10 @@ public:
         }
 
         col_order_.push_back(name);
-        Column copied = col.clone();
-        copied.quantity = quantity.empty() ? copied.quantity : quantity;
-        columns_[name].reset(new Column(std::move(copied)));
+        if (!quantity.empty()) {
+            col->quantity = quantity;
+        }
+        columns_[name] = std::move(col);
     }
 
     template <typename T>

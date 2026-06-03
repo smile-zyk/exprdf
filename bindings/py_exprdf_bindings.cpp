@@ -98,16 +98,17 @@ void bind_types_and_dataframe(py::module_& m) {
             return d.is_uniform() ? std::string("uniform") : std::string("grouped");
         })
         .def_property_readonly("levels", [](const exprdf::IndexDim& d) -> py::object {
-            if (!d.is_uniform()) return py::none();
-            switch (d.levels.tag) {
-                case exprdf::DType::Int:     return py::cast(d.levels.as<int>());
-                case exprdf::DType::Double:  return py::cast(d.levels.as<double>());
-                case exprdf::DType::String:  return py::cast(d.levels.as<std::string>());
-                case exprdf::DType::Complex: return py::cast(d.levels.as<std::complex<double>>());
+            if (!d.is_uniform() || !d.levels) return py::none();
+            const exprdf::Column& levels = *d.levels;
+            switch (levels.tag) {
+                case exprdf::DType::Int:     return py::cast(levels.as<int>());
+                case exprdf::DType::Double:  return py::cast(levels.as<double>());
+                case exprdf::DType::String:  return py::cast(levels.as<std::string>());
+                case exprdf::DType::Complex: return py::cast(levels.as<std::complex<double>>());
             }
             return py::none();
         })
-        .def_property_readonly("quantity", [](const exprdf::IndexDim& d) { return d.levels.quantity; })
+        .def_property_readonly("quantity", [](const exprdf::IndexDim& d) { return d.levels->quantity; })
         .def_property_readonly("group_lengths", [](const exprdf::IndexDim& d) { return d.group_lengths; })
         .def_property_readonly("num_outer", [](const exprdf::IndexDim& d) { return d.num_outer; })
         .def_property_readonly("level_count", [](const exprdf::IndexDim& d) { return d.level_count(); })

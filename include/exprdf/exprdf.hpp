@@ -515,20 +515,6 @@ public:
         return out;
     }
 
-    // Backward-compatible aliases for scalar construction.
-    static std::unique_ptr<Column> from_int(const std::vector<int>& v) {
-        return from_scalar<int>(v);
-    }
-    static std::unique_ptr<Column> from_double(const std::vector<double>& v) {
-        return from_scalar<double>(v);
-    }
-    static std::unique_ptr<Column> from_string(const std::vector<std::string>& v) {
-        return from_scalar<std::string>(v);
-    }
-    static std::unique_ptr<Column> from_complex(const std::vector<std::complex<double>>& v) {
-        return from_scalar<std::complex<double>>(v);
-    }
-
     std::size_t size() const { return storage_->size(); }
 
     // Number of conceptual rows.
@@ -975,7 +961,7 @@ enum class IndexKind { Uniform, Grouped };
 struct IndexDim {
     std::string name;
     IndexKind kind;
-    Column levels;                          // Uniform: unique ordered level values
+    std::unique_ptr<Column> levels;         // Uniform: unique ordered level values
     std::vector<std::size_t> group_lengths; // Grouped: inner element count per outer group
     std::size_t num_outer;                  // Uniform: number of outer groups
                                             //          (1 for the outermost dim; product of
@@ -995,7 +981,7 @@ struct IndexDim {
     //   Ragged Grouped  -> 0                    (stride math not applicable)
     std::size_t level_count() const {
         if (kind == IndexKind::Grouped && is_regular_grouped()) return group_lengths[0];
-        return levels.size();
+        return levels ? levels->size() : 0;
     }
 
     // max_group_length(): largest inner size across all grouped groups.
@@ -1018,11 +1004,33 @@ struct IndexDim {
 
     // Constructors (needed for C++11 compatibility: default member initializers
     // make a struct non-aggregate in C++11, breaking brace initialization).
-    IndexDim() : kind(IndexKind::Uniform), num_outer(1) {}
+    IndexDim() : kind(IndexKind::Uniform), levels(new Column()), num_outer(1) {}
     IndexDim(std::string n, IndexKind k, Column lvls,
              std::vector<std::size_t> glens, std::size_t no = 1)
-        : name(std::move(n)), kind(k), levels(std::move(lvls)),
+        : name(std::move(n)), kind(k), levels(new Column(std::move(lvls))),
           group_lengths(std::move(glens)), num_outer(no) {}
+
+    IndexDim(const IndexDim& other)
+        : name(other.name),
+          kind(other.kind),
+          levels(other.levels ? std::unique_ptr<Column>(new Column(*other.levels))
+                              : std::unique_ptr<Column>(new Column())),
+          group_lengths(other.group_lengths),
+          num_outer(other.num_outer) {}
+
+    IndexDim& operator=(const IndexDim& other) {
+        if (this == &other) return *this;
+        name = other.name;
+        kind = other.kind;
+        levels = other.levels ? std::unique_ptr<Column>(new Column(*other.levels))
+                              : std::unique_ptr<Column>(new Column());
+        group_lengths = other.group_lengths;
+        num_outer = other.num_outer;
+        return *this;
+    }
+
+    IndexDim(IndexDim&&) = default;
+    IndexDim& operator=(IndexDim&&) = default;
 
     template <typename T>
     static IndexDim create_uniform(const std::string& name,
@@ -1800,6 +1808,75 @@ public:
         add_grouped_index_groups<T>(name, groups, quantity);
     }
 
+    // add_grouped_index_columns: append a Grouped index dimension from per-group column blocks.
+    //   groups.size() must equal num_rows() (one group per current row).
+    //   Each group can have a different row count, but all groups must share scalar dtype/shape.
+    //   Existing columns are expanded with repeat_variable, matching add_grouped_index_groups behavior.
+    void add_grouped_index_columns(const std::string& name,
+                                 const std::vector<std::unique_ptr<Column>>& groups,
+                                 const std::string& quantity = "") {
+        if (has_column(name))
+            throw std::invalid_argument("Column '" + name + "' already exists");
+        if (col_order_.size() > index_dims_.size())
+            throw std::invalid_argument(
+                "Cannot add index after dependent columns have been added");
+        if (groups.empty())
+            throw std::invalid_argument("groups cannot be empty");
+
+        std::size_t old_rows = num_rows();
+        if (old_rows == 0)
+            throw std::invalid_argument(
+                "add_grouped_index_columns requires existing rows (add an index or base column first)");
+        if (groups.size() != old_rows)
+            throw std::invalid_argument(
+                "Expected " + std::to_string(old_rows) +
+                " groups (one per current row), got " + std::to_string(groups.size()));
+
+        if (!groups[0])
+            throw std::invalid_argument("add_grouped_index_columns: group column pointer is null");
+
+        const DType ref_tag = groups[0]->tag;
+        const std::vector<std::size_t> ref_shape = groups[0]->shape;
+
+        std::vector<std::size_t> lengths;
+        lengths.reserve(old_rows);
+        for (std::size_t i = 0; i < groups.size(); ++i) {
+            if (!groups[i])
+                throw std::invalid_argument("add_grouped_index_columns: group column pointer is null");
+            const Column& g = *groups[i];
+            if (g.tag != ref_tag)
+                throw std::invalid_argument(
+                    "add_grouped_index_columns: all group columns must have the same dtype");
+            if (g.shape != ref_shape)
+                throw std::invalid_argument(
+                    "add_grouped_index_columns: all group columns must have the same shape");
+            if (!g.shape.empty())
+                throw std::invalid_argument(
+                    "add_grouped_index_columns: grouped index columns must be scalar");
+            const std::size_t n = g.num_rows();
+            if (n == 0)
+                throw std::invalid_argument(
+                    "add_grouped_index_columns: each group must contain at least one row");
+            lengths.push_back(n);
+        }
+
+        // Expand existing columns: row i is repeated lengths[i] times.
+        for (auto& pair : columns_)
+            *pair.second = pair.second->repeat_variable(lengths);
+
+        Column merged = groups[0]->clone();
+        for (std::size_t i = 1; i < groups.size(); ++i)
+            merged.append(*groups[i]);
+
+        const std::string q = quantity.empty() ? merged.quantity : quantity;
+        merged.quantity = q;
+
+        col_order_.push_back(name);
+        columns_[name].reset(new Column(std::move(merged)));
+        index_dims_.push_back(IndexDim::create_grouped(name, lengths, q));
+        mi_ctx_valid_ = false;
+    }
+
     // from_product: construct a DataFrame from an ordered list of (name, levels) pairs.
     //   Applies add_uniform_index for each entry in sequence.
     static std::shared_ptr<DataFrame> from_product(
@@ -1959,7 +2036,7 @@ public:
                 std::size_t flat = 0;
                 for (std::size_t i = 0; i < ndim; ++i) {
                     const Column& col = get_col(names[i]);
-                    const Column& levels = out_dims[i].levels;
+                    const Column& levels = *out_dims[i].levels;
                     std::size_t dim_size = levels.size();
                     std::size_t level_idx = dim_size;
                     for (std::size_t j = 0; j < dim_size; ++j) {
@@ -2224,7 +2301,7 @@ public:
             const IndexDim& dim = index_dims_[d];
             std::size_t ng = ctx.group_counts[d];
             if (dim.is_uniform()) {
-                std::size_t lv = dim.levels.size();
+                std::size_t lv = dim.levels->size();
                 if (lv == 0)
                     throw std::invalid_argument(
                         "Uniform dimension '" + dim.name + "' has zero levels");
@@ -2251,7 +2328,7 @@ public:
             std::size_t ng = ctx.group_counts[d];
             ctx.leaf_rows[d].assign(ng, 0);
             if (dim.is_uniform()) {
-                std::size_t lv = dim.levels.size();
+                std::size_t lv = dim.levels->size();
                 for (std::size_t g = 0; g < ng; ++g) {
                     std::size_t base = g * lv;
                     std::size_t sum = 0;
@@ -2312,7 +2389,7 @@ public:
             std::size_t base = 0;
             std::size_t child_count = 0;
             if (dim.is_uniform()) {
-                child_count = dim.levels.size();
+                child_count = dim.levels->size();
                 base = group_id * child_count;
             } else {
                 const std::vector<std::size_t>& pref = ctx.grouped_prefix[d];
@@ -2360,7 +2437,7 @@ public:
             const IndexDim& dim = index_dims_[d];
             std::size_t pos = indices[d];
             if (dim.is_uniform()) {
-                std::size_t lv = dim.levels.size();
+                std::size_t lv = dim.levels->size();
                 if (pos >= lv)
                     throw std::out_of_range(
                         "Index " + std::to_string(pos) +
@@ -2440,11 +2517,11 @@ public:
                     throw std::out_of_range(
                         "\"" + idim.name + "\": index " + std::to_string(idx) + " is negative");
                 if (idim.is_uniform()) {
-                    if (static_cast<std::size_t>(idx) >= idim.levels.size())
+                    if (static_cast<std::size_t>(idx) >= idim.levels->size())
                         throw std::out_of_range(
                             "\"" + idim.name + "\": index " + std::to_string(idx) +
                             " is outside range 0.." +
-                            std::to_string(static_cast<int>(idim.levels.size()) - 1));
+                            std::to_string(static_cast<int>(idim.levels->size()) - 1));
                 } else if (idim.is_regular_grouped()) {
                     if (static_cast<std::size_t>(idx) >= idim.group_lengths[0])
                         throw std::out_of_range(

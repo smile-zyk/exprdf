@@ -1,11 +1,14 @@
 #include "exprdf/exprdf.hpp"
 
 #include <cassert>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 
 int main() {
     using exprdf::DataFrame;
+    using exprdf::Column;
 
     // 1) sub() should capture a live parent when parent is shared-owned.
     std::shared_ptr<DataFrame> parent = std::make_shared<DataFrame>();
@@ -72,6 +75,121 @@ int main() {
     copied_assign.set<int>("a", 0, -7);
     assert(df_ref.at<int>("a", 0) == 1);
     assert(copied_assign.at<int>("a", 0) == -7);
+
+    // 6) Column combine helpers: scalar -> list
+    Column s1 = Column::from_scalar<int>({1, 2});
+    Column s2 = Column::from_scalar<int>({10, 20});
+    Column s3 = Column::from_scalar<int>({100, 200});
+    Column list_col = Column::combine_scalars_to_list({s1, s2, s3});
+    assert(list_col.shape.size() == 1);
+    assert(list_col.shape[0] == 3);
+    assert(list_col.num_rows() == 2);
+    assert(list_col.get<int>(0, 1) == 1);
+    assert(list_col.get<int>(0, 2) == 10);
+    assert(list_col.get<int>(0, 3) == 100);
+    assert(list_col.get<int>(1, 1) == 2);
+    assert(list_col.get<int>(1, 2) == 20);
+    assert(list_col.get<int>(1, 3) == 200);
+
+    // 7) Column combine helpers: list -> matrix
+    Column l1 = Column::from_list_flat<int>({1, 2, 3, 4}, 2);
+    Column l2 = Column::from_list_flat<int>({5, 6, 7, 8}, 2);
+    Column matrix_from_lists = Column::combine_lists_to_matrix({l1, l2});
+    assert(matrix_from_lists.shape.size() == 2);
+    assert(matrix_from_lists.shape[0] == 2);
+    assert(matrix_from_lists.shape[1] == 2);
+    assert(matrix_from_lists.num_rows() == 2);
+    assert(matrix_from_lists.get<int>(0, 1, 1) == 1);
+    assert(matrix_from_lists.get<int>(0, 1, 2) == 2);
+    assert(matrix_from_lists.get<int>(0, 2, 1) == 5);
+    assert(matrix_from_lists.get<int>(0, 2, 2) == 6);
+    assert(matrix_from_lists.get<int>(1, 1, 1) == 3);
+    assert(matrix_from_lists.get<int>(1, 1, 2) == 4);
+    assert(matrix_from_lists.get<int>(1, 2, 1) == 7);
+    assert(matrix_from_lists.get<int>(1, 2, 2) == 8);
+
+    // 8) Column combine helpers: scalar -> matrix (with explicit shape)
+    Column m11 = Column::from_scalar<int>({1, 2});
+    Column m12 = Column::from_scalar<int>({3, 4});
+    Column m21 = Column::from_scalar<int>({5, 6});
+    Column m22 = Column::from_scalar<int>({7, 8});
+    Column matrix_from_scalars = Column::combine_scalars_to_matrix({m11, m12, m21, m22}, 2, 2);
+    assert(matrix_from_scalars.shape.size() == 2);
+    assert(matrix_from_scalars.shape[0] == 2);
+    assert(matrix_from_scalars.shape[1] == 2);
+    assert(matrix_from_scalars.num_rows() == 2);
+    assert(matrix_from_scalars.get<int>(0, 1, 1) == 1);
+    assert(matrix_from_scalars.get<int>(0, 1, 2) == 3);
+    assert(matrix_from_scalars.get<int>(0, 2, 1) == 5);
+    assert(matrix_from_scalars.get<int>(0, 2, 2) == 7);
+    assert(matrix_from_scalars.get<int>(1, 1, 1) == 2);
+    assert(matrix_from_scalars.get<int>(1, 1, 2) == 4);
+    assert(matrix_from_scalars.get<int>(1, 2, 1) == 6);
+    assert(matrix_from_scalars.get<int>(1, 2, 2) == 8);
+
+    // 9) Column combine helpers: negative paths should throw invalid_argument.
+    auto expect_invalid_argument = [](const std::function<void()>& fn) {
+        bool thrown = false;
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        assert(thrown);
+    };
+
+    // scalar -> list: dtype mismatch / non-scalar input / row mismatch
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_list(
+            {Column::from_scalar<int>({1, 2}), Column::from_scalar<double>({1.0, 2.0})});
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_list(
+            {Column::from_scalar<int>({1, 2}), Column::from_list_flat<int>({3, 4, 5, 6}, 2)});
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_list(
+            {Column::from_scalar<int>({1, 2}), Column::from_scalar<int>({3, 4, 5})});
+    });
+
+    // list -> matrix: non-list input / list-size mismatch / row mismatch
+    expect_invalid_argument([&]() {
+        Column::combine_lists_to_matrix(
+            {Column::from_list_flat<int>({1, 2, 3, 4}, 2), Column::from_scalar<int>({5, 6})});
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_lists_to_matrix(
+            {Column::from_list_flat<int>({1, 2, 3, 4}, 2), Column::from_list_flat<int>({5, 6, 7, 8, 9, 10}, 3)});
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_lists_to_matrix(
+            {Column::from_list_flat<int>({1, 2, 3, 4}, 2), Column::from_list_flat<int>({5, 6, 7, 8, 9, 10, 11, 12}, 2)});
+    });
+
+    // scalar -> matrix: dimension mismatch / non-scalar input / dtype mismatch / row mismatch
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_matrix(
+            {Column::from_scalar<int>({1, 2}), Column::from_scalar<int>({3, 4}), Column::from_scalar<int>({5, 6})},
+            2, 2);
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_matrix(
+            {Column::from_scalar<int>({1, 2}), Column::from_list_flat<int>({3, 4, 5, 6}, 2),
+             Column::from_scalar<int>({7, 8}), Column::from_scalar<int>({9, 10})},
+            2, 2);
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_matrix(
+            {Column::from_scalar<int>({1, 2}), Column::from_scalar<double>({3.0, 4.0}),
+             Column::from_scalar<int>({5, 6}), Column::from_scalar<int>({7, 8})},
+            2, 2);
+    });
+    expect_invalid_argument([&]() {
+        Column::combine_scalars_to_matrix(
+            {Column::from_scalar<int>({1, 2}), Column::from_scalar<int>({3, 4, 5}),
+             Column::from_scalar<int>({6, 7}), Column::from_scalar<int>({8, 9})},
+            2, 2);
+    });
 
     std::cout << "test_dataframe: all checks passed\n";
     return 0;

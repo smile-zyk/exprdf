@@ -379,6 +379,142 @@ public:
         return from_matrix_flat<T>(flat, mrows, mcols);
     }
 
+    // Merge K scalar columns (same dtype, same row count) into one list column of shape {K}.
+    // The resulting list order follows the input column order.
+    static Column combine_scalars_to_list(const std::vector<Column>& columns,
+                                          const std::string& quantity = "") {
+        if (columns.empty())
+            throw std::invalid_argument("combine_scalars_to_list: columns cannot be empty");
+
+        const DType t = columns[0].tag;
+        const std::size_t nrows = columns[0].num_rows();
+        for (std::size_t i = 0; i < columns.size(); ++i) {
+            if (columns[i].tag != t)
+                throw std::invalid_argument(
+                    "combine_scalars_to_list: all columns must have the same dtype");
+            if (!columns[i].shape.empty())
+                throw std::invalid_argument(
+                    "combine_scalars_to_list: all input columns must be scalar");
+            if (columns[i].num_rows() != nrows)
+                throw std::invalid_argument(
+                    "combine_scalars_to_list: all columns must have the same row count");
+        }
+
+        Column out;
+        switch (t) {
+            case DType::Int:
+                out = combine_scalars_to_list_typed<int>(columns);
+                break;
+            case DType::Double:
+                out = combine_scalars_to_list_typed<double>(columns);
+                break;
+            case DType::String:
+                out = combine_scalars_to_list_typed<std::string>(columns);
+                break;
+            case DType::Complex:
+                out = combine_scalars_to_list_typed<std::complex<double>>(columns);
+                break;
+        }
+        out.quantity = quantity;
+        return out;
+    }
+
+    // Merge K list columns (same dtype, same row count, same list length L)
+    // into one matrix column of shape {K, L}.
+    static Column combine_lists_to_matrix(const std::vector<Column>& columns,
+                                          const std::string& quantity = "") {
+        if (columns.empty())
+            throw std::invalid_argument("combine_lists_to_matrix: columns cannot be empty");
+
+        const DType t = columns[0].tag;
+        if (columns[0].shape.size() != 1)
+            throw std::invalid_argument(
+                "combine_lists_to_matrix: all input columns must be list columns");
+
+        const std::size_t nrows = columns[0].num_rows();
+        const std::size_t list_len = columns[0].shape[0];
+        for (std::size_t i = 0; i < columns.size(); ++i) {
+            if (columns[i].tag != t)
+                throw std::invalid_argument(
+                    "combine_lists_to_matrix: all columns must have the same dtype");
+            if (columns[i].shape.size() != 1)
+                throw std::invalid_argument(
+                    "combine_lists_to_matrix: all input columns must be list columns");
+            if (columns[i].shape[0] != list_len)
+                throw std::invalid_argument(
+                    "combine_lists_to_matrix: all list columns must have identical list length");
+            if (columns[i].num_rows() != nrows)
+                throw std::invalid_argument(
+                    "combine_lists_to_matrix: all columns must have the same row count");
+        }
+
+        Column out;
+        switch (t) {
+            case DType::Int:
+                out = combine_lists_to_matrix_typed<int>(columns);
+                break;
+            case DType::Double:
+                out = combine_lists_to_matrix_typed<double>(columns);
+                break;
+            case DType::String:
+                out = combine_lists_to_matrix_typed<std::string>(columns);
+                break;
+            case DType::Complex:
+                out = combine_lists_to_matrix_typed<std::complex<double>>(columns);
+                break;
+        }
+        out.quantity = quantity;
+        return out;
+    }
+
+    // Merge scalar columns into one matrix column.
+    // Extra shape info is required: columns.size() must equal mrows * mcols.
+    static Column combine_scalars_to_matrix(const std::vector<Column>& columns,
+                                            std::size_t mrows,
+                                            std::size_t mcols,
+                                            const std::string& quantity = "") {
+        if (columns.empty())
+            throw std::invalid_argument("combine_scalars_to_matrix: columns cannot be empty");
+        if (mrows == 0 || mcols == 0)
+            throw std::invalid_argument(
+                "combine_scalars_to_matrix: mrows and mcols must be non-zero");
+        if (columns.size() != mrows * mcols)
+            throw std::invalid_argument(
+                "combine_scalars_to_matrix: columns.size() must equal mrows*mcols");
+
+        const DType t = columns[0].tag;
+        const std::size_t nrows = columns[0].num_rows();
+        for (std::size_t i = 0; i < columns.size(); ++i) {
+            if (columns[i].tag != t)
+                throw std::invalid_argument(
+                    "combine_scalars_to_matrix: all columns must have the same dtype");
+            if (!columns[i].shape.empty())
+                throw std::invalid_argument(
+                    "combine_scalars_to_matrix: all input columns must be scalar");
+            if (columns[i].num_rows() != nrows)
+                throw std::invalid_argument(
+                    "combine_scalars_to_matrix: all columns must have the same row count");
+        }
+
+        Column out;
+        switch (t) {
+            case DType::Int:
+                out = combine_scalars_to_matrix_typed<int>(columns, mrows, mcols);
+                break;
+            case DType::Double:
+                out = combine_scalars_to_matrix_typed<double>(columns, mrows, mcols);
+                break;
+            case DType::String:
+                out = combine_scalars_to_matrix_typed<std::string>(columns, mrows, mcols);
+                break;
+            case DType::Complex:
+                out = combine_scalars_to_matrix_typed<std::complex<double>>(columns, mrows, mcols);
+                break;
+        }
+        out.quantity = quantity;
+        return out;
+    }
+
     // Backward-compatible aliases for scalar construction.
     static Column from_int(const std::vector<int>& v) {
         return from_scalar<int>(v);
@@ -703,6 +839,52 @@ public:
     }
 
 private:
+    template <typename T>
+    static Column combine_scalars_to_list_typed(const std::vector<Column>& columns) {
+        const std::size_t nrows = columns[0].num_rows();
+        const std::size_t list_size = columns.size();
+        std::vector<T> flat;
+        flat.reserve(nrows * list_size);
+
+        for (std::size_t r = 0; r < nrows; ++r) {
+            for (std::size_t c = 0; c < columns.size(); ++c)
+                flat.push_back(columns[c].storage_->as<T>()[r]);
+        }
+        return from_list_flat<T>(flat, list_size);
+    }
+
+    template <typename T>
+    static Column combine_lists_to_matrix_typed(const std::vector<Column>& columns) {
+        const std::size_t nrows = columns[0].num_rows();
+        const std::size_t mrows = columns.size();
+        const std::size_t mcols = columns[0].shape[0];
+
+        std::vector<T> flat;
+        flat.reserve(nrows * mrows * mcols);
+        for (std::size_t r = 0; r < nrows; ++r) {
+            for (std::size_t mr = 0; mr < mrows; ++mr) {
+                const std::vector<T>& src = columns[mr].storage_->as<T>();
+                const std::size_t base = r * mcols;
+                flat.insert(flat.end(), src.begin() + base, src.begin() + base + mcols);
+            }
+        }
+        return from_matrix_flat<T>(flat, mrows, mcols);
+    }
+
+    template <typename T>
+    static Column combine_scalars_to_matrix_typed(const std::vector<Column>& columns,
+                                                  std::size_t mrows,
+                                                  std::size_t mcols) {
+        const std::size_t nrows = columns[0].num_rows();
+        std::vector<T> flat;
+        flat.reserve(nrows * mrows * mcols);
+        for (std::size_t r = 0; r < nrows; ++r) {
+            for (std::size_t c = 0; c < columns.size(); ++c)
+                flat.push_back(columns[c].storage_->as<T>()[r]);
+        }
+        return from_matrix_flat<T>(flat, mrows, mcols);
+    }
+
     std::unique_ptr<ColumnStorageBase> storage_;
 };
 

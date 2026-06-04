@@ -381,21 +381,25 @@ public:
 
     // Merge K scalar columns (same dtype, same row count) into one list column of shape {K}.
     // The resulting list order follows the input column order.
-    static std::unique_ptr<Column> combine_scalars_to_list(const std::vector<Column>& columns,
+    static std::unique_ptr<Column> combine_scalars_to_list(const std::vector<std::unique_ptr<Column>>& columns,
                                                            const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_scalars_to_list: columns cannot be empty");
+        if (!columns[0])
+            throw std::invalid_argument("combine_scalars_to_list: column pointer is null");
 
-        const DType t = columns[0].tag;
-        const std::size_t nrows = columns[0].num_rows();
+        const DType t = columns[0]->tag;
+        const std::size_t nrows = columns[0]->num_rows();
         for (std::size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].tag != t)
+            if (!columns[i])
+                throw std::invalid_argument("combine_scalars_to_list: column pointer is null");
+            if (columns[i]->tag != t)
                 throw std::invalid_argument(
                     "combine_scalars_to_list: all columns must have the same dtype");
-            if (!columns[i].shape.empty())
+            if (!columns[i]->shape.empty())
                 throw std::invalid_argument(
                     "combine_scalars_to_list: all input columns must be scalar");
-            if (columns[i].num_rows() != nrows)
+            if (columns[i]->num_rows() != nrows)
                 throw std::invalid_argument(
                     "combine_scalars_to_list: all columns must have the same row count");
         }
@@ -421,29 +425,33 @@ public:
 
     // Merge K list columns (same dtype, same row count, same list length L)
     // into one matrix column of shape {K, L}.
-    static std::unique_ptr<Column> combine_lists_to_matrix(const std::vector<Column>& columns,
+    static std::unique_ptr<Column> combine_lists_to_matrix(const std::vector<std::unique_ptr<Column>>& columns,
                                                            const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_lists_to_matrix: columns cannot be empty");
+        if (!columns[0])
+            throw std::invalid_argument("combine_lists_to_matrix: column pointer is null");
 
-        const DType t = columns[0].tag;
-        if (columns[0].shape.size() != 1)
+        const DType t = columns[0]->tag;
+        if (columns[0]->shape.size() != 1)
             throw std::invalid_argument(
                 "combine_lists_to_matrix: all input columns must be list columns");
 
-        const std::size_t nrows = columns[0].num_rows();
-        const std::size_t list_len = columns[0].shape[0];
+        const std::size_t nrows = columns[0]->num_rows();
+        const std::size_t list_len = columns[0]->shape[0];
         for (std::size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].tag != t)
+            if (!columns[i])
+                throw std::invalid_argument("combine_lists_to_matrix: column pointer is null");
+            if (columns[i]->tag != t)
                 throw std::invalid_argument(
                     "combine_lists_to_matrix: all columns must have the same dtype");
-            if (columns[i].shape.size() != 1)
+            if (columns[i]->shape.size() != 1)
                 throw std::invalid_argument(
                     "combine_lists_to_matrix: all input columns must be list columns");
-            if (columns[i].shape[0] != list_len)
+            if (columns[i]->shape[0] != list_len)
                 throw std::invalid_argument(
                     "combine_lists_to_matrix: all list columns must have identical list length");
-            if (columns[i].num_rows() != nrows)
+            if (columns[i]->num_rows() != nrows)
                 throw std::invalid_argument(
                     "combine_lists_to_matrix: all columns must have the same row count");
         }
@@ -469,12 +477,14 @@ public:
 
     // Merge scalar columns into one matrix column.
     // Extra shape info is required: columns.size() must equal mrows * mcols.
-    static std::unique_ptr<Column> combine_scalars_to_matrix(const std::vector<Column>& columns,
+    static std::unique_ptr<Column> combine_scalars_to_matrix(const std::vector<std::unique_ptr<Column>>& columns,
                                                              std::size_t mrows,
                                                              std::size_t mcols,
                                                              const std::string& quantity = "") {
         if (columns.empty())
             throw std::invalid_argument("combine_scalars_to_matrix: columns cannot be empty");
+        if (!columns[0])
+            throw std::invalid_argument("combine_scalars_to_matrix: column pointer is null");
         if (mrows == 0 || mcols == 0)
             throw std::invalid_argument(
                 "combine_scalars_to_matrix: mrows and mcols must be non-zero");
@@ -482,16 +492,18 @@ public:
             throw std::invalid_argument(
                 "combine_scalars_to_matrix: columns.size() must equal mrows*mcols");
 
-        const DType t = columns[0].tag;
-        const std::size_t nrows = columns[0].num_rows();
+        const DType t = columns[0]->tag;
+        const std::size_t nrows = columns[0]->num_rows();
         for (std::size_t i = 0; i < columns.size(); ++i) {
-            if (columns[i].tag != t)
+            if (!columns[i])
+                throw std::invalid_argument("combine_scalars_to_matrix: column pointer is null");
+            if (columns[i]->tag != t)
                 throw std::invalid_argument(
                     "combine_scalars_to_matrix: all columns must have the same dtype");
-            if (!columns[i].shape.empty())
+            if (!columns[i]->shape.empty())
                 throw std::invalid_argument(
                     "combine_scalars_to_matrix: all input columns must be scalar");
-            if (columns[i].num_rows() != nrows)
+            if (columns[i]->num_rows() != nrows)
                 throw std::invalid_argument(
                     "combine_scalars_to_matrix: all columns must have the same row count");
         }
@@ -888,30 +900,30 @@ public:
 
 private:
     template <typename T>
-    static std::unique_ptr<Column> combine_scalars_to_list_typed(const std::vector<Column>& columns) {
-        const std::size_t nrows = columns[0].num_rows();
+    static std::unique_ptr<Column> combine_scalars_to_list_typed(const std::vector<std::unique_ptr<Column>>& columns) {
+        const std::size_t nrows = columns[0]->num_rows();
         const std::size_t list_size = columns.size();
         std::vector<T> flat;
         flat.reserve(nrows * list_size);
 
         for (std::size_t r = 0; r < nrows; ++r) {
             for (std::size_t c = 0; c < columns.size(); ++c)
-                flat.push_back(columns[c].storage_->as<T>()[r]);
+                flat.push_back(columns[c]->storage_->as<T>()[r]);
         }
         return from_list_flat<T>(flat, list_size);
     }
 
     template <typename T>
-    static std::unique_ptr<Column> combine_lists_to_matrix_typed(const std::vector<Column>& columns) {
-        const std::size_t nrows = columns[0].num_rows();
+    static std::unique_ptr<Column> combine_lists_to_matrix_typed(const std::vector<std::unique_ptr<Column>>& columns) {
+        const std::size_t nrows = columns[0]->num_rows();
         const std::size_t mrows = columns.size();
-        const std::size_t mcols = columns[0].shape[0];
+        const std::size_t mcols = columns[0]->shape[0];
 
         std::vector<T> flat;
         flat.reserve(nrows * mrows * mcols);
         for (std::size_t r = 0; r < nrows; ++r) {
             for (std::size_t mr = 0; mr < mrows; ++mr) {
-                const std::vector<T>& src = columns[mr].storage_->as<T>();
+                const std::vector<T>& src = columns[mr]->storage_->as<T>();
                 const std::size_t base = r * mcols;
                 flat.insert(flat.end(), src.begin() + base, src.begin() + base + mcols);
             }
@@ -920,15 +932,15 @@ private:
     }
 
     template <typename T>
-    static std::unique_ptr<Column> combine_scalars_to_matrix_typed(const std::vector<Column>& columns,
+    static std::unique_ptr<Column> combine_scalars_to_matrix_typed(const std::vector<std::unique_ptr<Column>>& columns,
                                                                    std::size_t mrows,
                                                                    std::size_t mcols) {
-        const std::size_t nrows = columns[0].num_rows();
+        const std::size_t nrows = columns[0]->num_rows();
         std::vector<T> flat;
         flat.reserve(nrows * mrows * mcols);
         for (std::size_t r = 0; r < nrows; ++r) {
             for (std::size_t c = 0; c < columns.size(); ++c)
-                flat.push_back(columns[c].storage_->as<T>()[r]);
+                flat.push_back(columns[c]->storage_->as<T>()[r]);
         }
         return from_matrix_flat<T>(flat, mrows, mcols);
     }

@@ -10,6 +10,14 @@ int main() {
     using exprdf::DataFrame;
     using exprdf::Column;
 
+    auto make_col_ptrs = [](std::initializer_list<Column> cols) {
+        std::vector<std::unique_ptr<Column>> out;
+        out.reserve(cols.size());
+        for (const auto& c : cols)
+            out.emplace_back(new Column(c));
+        return out;
+    };
+
     // 1) sub() should capture a live parent when parent is shared-owned.
     std::shared_ptr<DataFrame> parent = std::make_shared<DataFrame>();
     parent->add_column<int>("x", std::vector<int>{1, 2, 3});
@@ -80,7 +88,7 @@ int main() {
     Column s1 = *Column::from_scalar<int>({1, 2});
     Column s2 = *Column::from_scalar<int>({10, 20});
     Column s3 = *Column::from_scalar<int>({100, 200});
-    Column list_col = *Column::combine_scalars_to_list({s1, s2, s3});
+    Column list_col = *Column::combine_scalars_to_list(make_col_ptrs({s1, s2, s3}));
     assert(list_col.shape.size() == 1);
     assert(list_col.shape[0] == 3);
     assert(list_col.num_rows() == 2);
@@ -94,7 +102,7 @@ int main() {
     // 7) Column combine helpers: list -> matrix
     Column l1 = *Column::from_list_flat<int>({1, 2, 3, 4}, 2);
     Column l2 = *Column::from_list_flat<int>({5, 6, 7, 8}, 2);
-    Column matrix_from_lists = *Column::combine_lists_to_matrix({l1, l2});
+    Column matrix_from_lists = *Column::combine_lists_to_matrix(make_col_ptrs({l1, l2}));
     assert(matrix_from_lists.shape.size() == 2);
     assert(matrix_from_lists.shape[0] == 2);
     assert(matrix_from_lists.shape[1] == 2);
@@ -113,7 +121,7 @@ int main() {
     Column m12 = *Column::from_scalar<int>({3, 4});
     Column m21 = *Column::from_scalar<int>({5, 6});
     Column m22 = *Column::from_scalar<int>({7, 8});
-    Column matrix_from_scalars = *Column::combine_scalars_to_matrix({m11, m12, m21, m22}, 2, 2);
+    Column matrix_from_scalars = *Column::combine_scalars_to_matrix(make_col_ptrs({m11, m12, m21, m22}), 2, 2);
     assert(matrix_from_scalars.shape.size() == 2);
     assert(matrix_from_scalars.shape[0] == 2);
     assert(matrix_from_scalars.shape[1] == 2);
@@ -141,53 +149,53 @@ int main() {
     // scalar -> list: dtype mismatch / non-scalar input / row mismatch
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_list(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_scalar<double>({1.0, 2.0})});
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_scalar<double>({1.0, 2.0})}));
     });
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_list(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_list_flat<int>({3, 4, 5, 6}, 2)});
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_list_flat<int>({3, 4, 5, 6}, 2)}));
     });
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_list(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4, 5})});
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4, 5})}));
     });
 
     // list -> matrix: non-list input / list-size mismatch / row mismatch
     expect_invalid_argument([&]() {
         Column::combine_lists_to_matrix(
-            {*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_scalar<int>({5, 6})});
+            make_col_ptrs({*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_scalar<int>({5, 6})}));
     });
     expect_invalid_argument([&]() {
         Column::combine_lists_to_matrix(
-            {*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_list_flat<int>({5, 6, 7, 8, 9, 10}, 3)});
+            make_col_ptrs({*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_list_flat<int>({5, 6, 7, 8, 9, 10}, 3)}));
     });
     expect_invalid_argument([&]() {
         Column::combine_lists_to_matrix(
-            {*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_list_flat<int>({5, 6, 7, 8, 9, 10, 11, 12}, 2)});
+            make_col_ptrs({*Column::from_list_flat<int>({1, 2, 3, 4}, 2), *Column::from_list_flat<int>({5, 6, 7, 8, 9, 10, 11, 12}, 2)}));
     });
 
     // scalar -> matrix: dimension mismatch / non-scalar input / dtype mismatch / row mismatch
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_matrix(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4}), *Column::from_scalar<int>({5, 6})},
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4}), *Column::from_scalar<int>({5, 6})}),
             2, 2);
     });
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_matrix(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_list_flat<int>({3, 4, 5, 6}, 2),
-             *Column::from_scalar<int>({7, 8}), *Column::from_scalar<int>({9, 10})},
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_list_flat<int>({3, 4, 5, 6}, 2),
+             *Column::from_scalar<int>({7, 8}), *Column::from_scalar<int>({9, 10})}),
             2, 2);
     });
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_matrix(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_scalar<double>({3.0, 4.0}),
-             *Column::from_scalar<int>({5, 6}), *Column::from_scalar<int>({7, 8})},
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_scalar<double>({3.0, 4.0}),
+             *Column::from_scalar<int>({5, 6}), *Column::from_scalar<int>({7, 8})}),
             2, 2);
     });
     expect_invalid_argument([&]() {
         Column::combine_scalars_to_matrix(
-            {*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4, 5}),
-             *Column::from_scalar<int>({6, 7}), *Column::from_scalar<int>({8, 9})},
+            make_col_ptrs({*Column::from_scalar<int>({1, 2}), *Column::from_scalar<int>({3, 4, 5}),
+             *Column::from_scalar<int>({6, 7}), *Column::from_scalar<int>({8, 9})}),
             2, 2);
     });
 

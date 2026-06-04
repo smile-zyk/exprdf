@@ -650,15 +650,14 @@ assert abs(s11[0] - (-20.0)) < 1e-12
 assert abs(s11[1] - (-25.0)) < 1e-12
 print("PASSED")
 
-# === Python Test 41: first index cannot be varying ===
-print("\n=== Python Test 41: first index cannot be varying ===")
+# === Python Test 41: first index can be grouped ===
+print("\n=== Python Test 41: first index can be grouped ===")
 df_first = pdf.DataFrame()
-caught = False
-try:
-    df_first.add_grouped_index("freq", [1.0, 2.0], 2)
-except Exception:
-    caught = True
-assert caught
+df_first.add_grouped_index("freq", [1.0, 2.0], 2)
+assert df_first.num_indices() == 1
+assert df_first.num_rows() == 2
+assert df_first["freq"][0] == 1.0
+assert df_first["freq"][1] == 2.0
 print("PASSED")
 
 # === Python Test 42: add_grouped_index basic ===

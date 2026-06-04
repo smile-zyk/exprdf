@@ -84,7 +84,101 @@ int main() {
     assert(df_ref.at<int>("a", 0) == 1);
     assert(copied_assign.at<int>("a", 0) == -7);
 
-    // 6) Column combine helpers: scalar -> list
+    // 6) add_uniform_index_column: scalar-column input path and expansion behavior.
+    DataFrame df_ui;
+    auto f_levels = Column::from_scalar<double>({1.0, 2.0, 3.0});
+    f_levels->quantity = "Hz";
+    df_ui.add_uniform_index_column("f", std::move(f_levels));
+    assert(df_ui.num_indices() == 1);
+    assert(df_ui.num_rows() == 3);
+    assert(df_ui.at<double>("f", 0) == 1.0);
+    assert(df_ui.at<double>("f", 1) == 2.0);
+    assert(df_ui.at<double>("f", 2) == 3.0);
+    assert(df_ui.column_quantity("f") == "Hz");
+
+    auto t_levels = Column::from_scalar<int>({10, 20});
+    df_ui.add_uniform_index_column("t", std::move(t_levels), "C");
+    assert(df_ui.num_indices() == 2);
+    assert(df_ui.num_rows() == 6);
+    assert(df_ui.at<double>("f", 0) == 1.0);
+    assert(df_ui.at<double>("f", 1) == 1.0);
+    assert(df_ui.at<double>("f", 2) == 2.0);
+    assert(df_ui.at<double>("f", 3) == 2.0);
+    assert(df_ui.at<double>("f", 4) == 3.0);
+    assert(df_ui.at<double>("f", 5) == 3.0);
+    assert(df_ui.at<int>("t", 0) == 10);
+    assert(df_ui.at<int>("t", 1) == 20);
+    assert(df_ui.at<int>("t", 2) == 10);
+    assert(df_ui.at<int>("t", 3) == 20);
+    assert(df_ui.at<int>("t", 4) == 10);
+    assert(df_ui.at<int>("t", 5) == 20);
+    assert(df_ui.column_quantity("t") == "C");
+
+    {
+        DataFrame df_bad;
+        bool thrown = false;
+        try {
+            std::unique_ptr<Column> null_levels;
+            df_bad.add_uniform_index_column("u", std::move(null_levels));
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        assert(thrown);
+    }
+
+    {
+        DataFrame df_bad;
+        bool thrown = false;
+        try {
+            auto list_levels = Column::from_list_flat<int>({1, 2, 3, 4}, 2);
+            df_bad.add_uniform_index_column("u", std::move(list_levels));
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        assert(thrown);
+    }
+
+    // 7) grouped index APIs: allow grouped as first index dimension.
+    DataFrame df_g_first;
+    df_g_first.add_grouped_index<int>("g", std::vector<int>{10, 20, 30}, 3, "u");
+    assert(df_g_first.num_indices() == 1);
+    assert(df_g_first.num_rows() == 3);
+    assert(df_g_first.at<int>("g", 0) == 10);
+    assert(df_g_first.at<int>("g", 1) == 20);
+    assert(df_g_first.at<int>("g", 2) == 30);
+    assert(df_g_first.column_quantity("g") == "u");
+
+    DataFrame df_g_first_groups;
+    df_g_first_groups.add_grouped_index_groups<int>("gg", std::vector<std::vector<int>>{{7, 8, 9}});
+    assert(df_g_first_groups.num_indices() == 1);
+    assert(df_g_first_groups.num_rows() == 3);
+    assert(df_g_first_groups.at<int>("gg", 0) == 7);
+    assert(df_g_first_groups.at<int>("gg", 1) == 8);
+    assert(df_g_first_groups.at<int>("gg", 2) == 9);
+
+    {
+        DataFrame df_bad;
+        bool thrown = false;
+        try {
+            df_bad.add_grouped_index<int>("g", std::vector<int>{1, 2}, 3);
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        assert(thrown);
+    }
+
+    {
+        DataFrame df_bad;
+        bool thrown = false;
+        try {
+            df_bad.add_grouped_index_groups<int>("g", std::vector<std::vector<int>>{{1}, {2}});
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        assert(thrown);
+    }
+
+    // 8) Column combine helpers: scalar -> list
     Column s1 = *Column::from_scalar<int>({1, 2});
     Column s2 = *Column::from_scalar<int>({10, 20});
     Column s3 = *Column::from_scalar<int>({100, 200});
@@ -99,7 +193,7 @@ int main() {
     assert(list_col.get<int>(1, 2) == 20);
     assert(list_col.get<int>(1, 3) == 200);
 
-    // 7) Column combine helpers: list -> matrix
+    // 9) Column combine helpers: list -> matrix
     Column l1 = *Column::from_list_flat<int>({1, 2, 3, 4}, 2);
     Column l2 = *Column::from_list_flat<int>({5, 6, 7, 8}, 2);
     Column matrix_from_lists = *Column::combine_lists_to_matrix(make_col_ptrs({l1, l2}));
@@ -116,7 +210,7 @@ int main() {
     assert(matrix_from_lists.get<int>(1, 2, 1) == 7);
     assert(matrix_from_lists.get<int>(1, 2, 2) == 8);
 
-    // 8) Column combine helpers: scalar -> matrix (with explicit shape)
+    // 10) Column combine helpers: scalar -> matrix (with explicit shape)
     Column m11 = *Column::from_scalar<int>({1, 2});
     Column m12 = *Column::from_scalar<int>({3, 4});
     Column m21 = *Column::from_scalar<int>({5, 6});
@@ -135,7 +229,7 @@ int main() {
     assert(matrix_from_scalars.get<int>(1, 2, 1) == 6);
     assert(matrix_from_scalars.get<int>(1, 2, 2) == 8);
 
-    // 9) Column combine helpers: negative paths should throw invalid_argument.
+    // 11) Column combine helpers: negative paths should throw invalid_argument.
     auto expect_invalid_argument = [](const std::function<void()>& fn) {
         bool thrown = false;
         try {

@@ -155,7 +155,7 @@ QString DataFrameModel::rowHeader(std::size_t row) const
     if (df_->num_indices() == 0) {
         return QString::number(static_cast<qlonglong>(row));
     }
-    std::vector<std::size_t> mi = df_->multi_index(row);
+    std::vector<int> mi = df_->multi_index(row);
     QString header;
     for (std::size_t i = 0; i < mi.size(); ++i) {
         if (i > 0) header += ',';

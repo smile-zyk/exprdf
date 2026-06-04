@@ -1703,10 +1703,52 @@ public:
         mi_ctx_valid_ = false;
     }
 
+    // add_uniform_index_column: append a Uniform dimension from a scalar Column.
+    //   levels must be a non-empty scalar column; each row is one level value.
+    //   Existing row data is Cartesian-expanded, same as add_uniform_index.
+    void add_uniform_index_column(const std::string& name,
+                                  std::unique_ptr<Column> levels,
+                                  const std::string& quantity = "") {
+        if (!levels)
+            throw std::invalid_argument("add_uniform_index_column: levels pointer is null");
+        if (levels->shape.size() != 0)
+            throw std::invalid_argument("add_uniform_index_column: levels must be a scalar column");
+        if (levels->num_rows() == 0)
+            throw std::invalid_argument("add_uniform_index_column: levels cannot be empty");
+        if (has_column(name))
+            throw std::invalid_argument("Column '" + name + "' already exists");
+        if (col_order_.size() > index_dims_.size())
+            throw std::invalid_argument(
+                "Cannot add index after dependent columns have been added");
+
+        const std::size_t new_n = levels->num_rows();
+        const std::size_t old_rows = num_rows();
+        const std::size_t outer = (old_rows == 0) ? 1 : old_rows;
+
+        Column base_levels = levels->clone();
+        if (!quantity.empty()) base_levels.quantity = quantity;
+
+        if (old_rows == 0) {
+            col_order_.push_back(name);
+            columns_[name].reset(new Column(base_levels.clone()));
+        } else {
+            // Expand existing columns: repeat each value new_n times.
+            for (auto& pair : columns_) {
+                *pair.second = pair.second->repeat_each(new_n);
+            }
+            // Add new column: tile provided levels old_rows times.
+            col_order_.push_back(name);
+            columns_[name].reset(new Column(base_levels.tile(old_rows)));
+        }
+
+        index_dims_.push_back(IndexDim::create_uniform(name, std::move(base_levels), outer));
+        mi_ctx_valid_ = false;
+    }
+
     // add_grouped_index: append a Regular Grouped dimension (equal-sized groups, flat input).
     //   values.size() must equal num_rows() * group_size.
     //   Unlike Uniform, inner values can differ per outer group.
-    //   Cannot be the first dimension (requires an existing outer dimension).
+    //   When used as the first index dimension, values.size() must equal group_size.
     template <typename T>
     void add_grouped_index(const std::string& name,
                            const std::vector<T>& values,
@@ -1722,32 +1764,40 @@ public:
 
         std::size_t old_rows = num_rows();
 
-        if (old_rows == 0)
-            throw std::invalid_argument(
-                "First index dimension cannot be grouped; use add_uniform_index() first");
-        if (values.size() != old_rows * group_size)
-            throw std::invalid_argument(
-                "Expected " + std::to_string(old_rows * group_size) +
-                " values (old_rows * group_size), got " +
-                std::to_string(values.size()));
+        if (old_rows == 0) {
+            if (values.size() != group_size)
+                throw std::invalid_argument(
+                    "Expected " + std::to_string(group_size) +
+                    " values for first grouped index (group_size), got " +
+                    std::to_string(values.size()));
+        } else {
+            if (values.size() != old_rows * group_size)
+                throw std::invalid_argument(
+                    "Expected " + std::to_string(old_rows * group_size) +
+                    " values (old_rows * group_size), got " +
+                    std::to_string(values.size()));
 
-        // Expand existing columns: repeat each value group_size times
-        for (auto& pair : columns_) {
-            *pair.second = pair.second->repeat_each(group_size);
+            // Expand existing columns: repeat each value group_size times
+            for (auto& pair : columns_) {
+                *pair.second = pair.second->repeat_each(group_size);
+            }
         }
         col_order_.push_back(name);
         Column col = make_column<T>(values);
         col.quantity = quantity;
         columns_[name].reset(new Column(std::move(col)));
 
-        index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(old_rows, group_size), quantity));
+        if (old_rows == 0)
+            index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(1, group_size), quantity));
+        else
+            index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(old_rows, group_size), quantity));
         mi_ctx_valid_ = false;
     }
 
     // add_grouped_index_groups: append a Grouped dimension from per-group value lists.
     //   groups.size() must equal num_rows() (one list per current outer row).
     //   Inner lists may differ in size -> produces a Ragged Grouped dimension.
-    //   Cannot be the first dimension (requires an existing outer dimension).
+    //   When used as the first index dimension, exactly one group must be provided.
     template <typename T>
     void add_grouped_index_groups(const std::string& name,
                                   const std::vector<std::vector<T>>& groups,
@@ -1760,13 +1810,17 @@ public:
         if (groups.empty())
             throw std::invalid_argument("groups cannot be empty");
         std::size_t old_rows = num_rows();
-        if (old_rows == 0)
-            throw std::invalid_argument(
-                "First index dimension cannot be grouped; use add_uniform_index() first");
-        if (groups.size() != old_rows)
-            throw std::invalid_argument(
-                "Expected " + std::to_string(old_rows) +
-                " groups (one per current row), got " + std::to_string(groups.size()));
+        if (old_rows == 0) {
+            if (groups.size() != 1)
+                throw std::invalid_argument(
+                    "For first grouped index dimension, groups.size() must be 1, got " +
+                    std::to_string(groups.size()));
+        } else {
+            if (groups.size() != old_rows)
+                throw std::invalid_argument(
+                    "Expected " + std::to_string(old_rows) +
+                    " groups (one per current row), got " + std::to_string(groups.size()));
+        }
 
         // Collect per-group lengths
         std::vector<std::size_t> lengths;
@@ -1778,8 +1832,10 @@ public:
         }
 
         // Expand every existing column: row i is repeated lengths[i] times
-        for (auto& pair : columns_)
-            *pair.second = pair.second->repeat_variable(lengths);
+        if (old_rows != 0) {
+            for (auto& pair : columns_)
+                *pair.second = pair.second->repeat_variable(lengths);
+        }
 
         // Flatten groups and add as new column
         std::vector<T> flat;
@@ -2167,23 +2223,6 @@ public:
                         cur_groups.push_back(run);
             }
 
-            // Under current semantics, a single-column repeated-value layout is ambiguous.
-            if (names.size() == 1 && !cur_groups.empty() && !out_dims.empty() && out_dims.back().is_uniform()) {
-                bool has_multi_row_run = false;
-                for (const auto& g : cur_groups) {
-                    if (g.second > 1) {
-                        has_multi_row_run = true;
-                        break;
-                    }
-                }
-                if (has_multi_row_run) {
-                    throw std::invalid_argument(
-                        "set_index: single-column repeated values are ambiguous under the "
-                        "current index semantics (first index must be uniform). "
-                        "Use add_uniform_index() for positional uniform indices.");
-                }
-            }
-
             for (const auto& g : cur_groups) {
                 if (g.second != 1)
                     throw std::invalid_argument(
@@ -2193,11 +2232,6 @@ public:
 
         if (!try_uniform_cartesian_infer(new_dims)) {
             infer_mixed_index_dims(new_dims);
-        }
-
-        if (!new_dims.empty() && new_dims.front().is_grouped()) {
-            throw std::invalid_argument(
-                "set_index: first index dimension must be uniform; grouped first dimension is not supported.");
         }
 
         // Set inferred/validated index dims.

@@ -1516,7 +1516,7 @@ public:
             for (std::size_t r = 0; r < display_rows; ++r) {
                 std::string label;
                 if (!has_ragged_dim) {
-                    std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
+                    std::vector<int> mi = multi_index_at(r, mi_ctx);
                     for (std::size_t d = 0; d < mi.size(); ++d) {
                         if (d > 0) label += ',';
                         label += std::to_string(mi[d]);
@@ -2269,7 +2269,7 @@ public:
     //                     where the group size is group_lengths[group_id].
     //   Uses stride arithmetic when all dims are Uniform/Regular Grouped;
     //   otherwise uses a metadata walk (no column-value scan).
-    std::size_t flat_index(const std::vector<std::size_t>& indices) const {
+    std::size_t flat_index(const std::vector<int>& indices) const {
         if (indices.size() != index_dims_.size())
             throw std::invalid_argument(
                 "Expected " + std::to_string(index_dims_.size()) +
@@ -2376,7 +2376,7 @@ public:
     }
 
     // multi_index_at: per-row lookup using a precomputed MultiIndexCtx.
-    std::vector<std::size_t> multi_index_at(std::size_t flat, const MultiIndexCtx& ctx) const {
+    std::vector<int> multi_index_at(std::size_t flat, const MultiIndexCtx& ctx) const {
         std::size_t n = index_dims_.size();
         if (flat >= num_rows())
             throw std::out_of_range(
@@ -2384,7 +2384,7 @@ public:
                 " out of range (num_rows=" + std::to_string(num_rows()) + ")");
 
         if (ctx.can_use_strides) {
-            std::vector<std::size_t> result(n);
+            std::vector<int> result(n);
             std::size_t rem = flat;
             for (std::size_t i = 0; i < n; ++i) {
                 result[i] = rem / ctx.strides_vec[i];
@@ -2393,7 +2393,7 @@ public:
             return result;
         }
 
-        std::vector<std::size_t> result(n);
+        std::vector<int> result(n);
         std::size_t cur_start = 0;
         std::size_t group_id = 0;
         for (std::size_t d = 0; d < n; ++d) {
@@ -2421,7 +2421,7 @@ public:
                 throw std::invalid_argument(
                     "multi_index: internal metadata traversal failed");
 
-            result[d] = pos;
+            result[d] = static_cast<int>(pos);
             cur_start += acc;
             group_id = base + pos;
         }
@@ -2429,16 +2429,16 @@ public:
     }
 
     // flat_index_at: per-call forward lookup using a precomputed MultiIndexCtx.
-    std::size_t flat_index_at(const std::vector<std::size_t>& indices, const MultiIndexCtx& ctx) const {
+    std::size_t flat_index_at(const std::vector<int>& indices, const MultiIndexCtx& ctx) const {
         std::size_t n = index_dims_.size();
         if (ctx.can_use_strides) {
             std::size_t row = 0;
             for (std::size_t i = 0; i < n; ++i) {
-                if (indices[i] >= index_dims_[i].level_count())
+                if (indices[i] < 0 || static_cast<std::size_t>(indices[i]) >= index_dims_[i].level_count())
                     throw std::out_of_range(
                         "Index " + std::to_string(indices[i]) +
                         " out of range for dimension '" + index_dims_[i].name + "'");
-                row += indices[i] * ctx.strides_vec[i];
+                row += static_cast<std::size_t>(indices[i]) * ctx.strides_vec[i];
             }
             return row;
         }
@@ -2447,32 +2447,36 @@ public:
         std::size_t group_id = 0;
         for (std::size_t d = 0; d < n; ++d) {
             const IndexDim& dim = index_dims_[d];
-            std::size_t pos = indices[d];
+            int pos = indices[d];
+            if (pos < 0)
+                throw std::out_of_range(
+                    "Index " + std::to_string(pos) +
+                    " out of range for dimension '" + dim.name + "'");
             if (dim.is_uniform()) {
                 std::size_t lv = dim.levels->size();
-                if (pos >= lv)
+                if (static_cast<std::size_t>(pos) >= lv)
                     throw std::out_of_range(
                         "Index " + std::to_string(pos) +
                         " out of range for dimension '" + dim.name + "'");
                 std::size_t base = group_id * lv;
                 std::size_t offset = 0;
-                for (std::size_t j = 0; j < pos; ++j)
+                for (std::size_t j = 0; j < static_cast<std::size_t>(pos); ++j)
                     offset += ctx.leaf_rows[d + 1][base + j];
                 cur_start += offset;
-                group_id = base + pos;
+                group_id = base + static_cast<std::size_t>(pos);
             } else {
                 const std::vector<std::size_t>& pref = ctx.grouped_prefix[d];
                 std::size_t gsz = pref[group_id + 1] - pref[group_id];
-                if (pos >= gsz)
+                if (static_cast<std::size_t>(pos) >= gsz)
                     throw std::out_of_range(
                         "Index " + std::to_string(pos) +
                         " out of range for dimension '" + dim.name + "'");
                 std::size_t base = pref[group_id];
                 std::size_t offset = 0;
-                for (std::size_t j = 0; j < pos; ++j)
+                for (std::size_t j = 0; j < static_cast<std::size_t>(pos); ++j)
                     offset += ctx.leaf_rows[d + 1][base + j];
                 cur_start += offset;
-                group_id = base + pos;
+                group_id = base + static_cast<std::size_t>(pos);
             }
         }
         return cur_start;
@@ -2483,7 +2487,7 @@ public:
     //     Uniform dim d : returns level ordinal in [0, levels.size()).
     //     Grouped dim d : returns element ordinal within that outer group,
     //                     where the group size is group_lengths[group_id].
-    std::vector<std::size_t> multi_index(std::size_t flat) const {
+    std::vector<int> multi_index(std::size_t flat) const {
         if (index_dims_.empty())
             throw std::invalid_argument("No index dimensions");
         if (flat >= num_rows())
@@ -2519,7 +2523,7 @@ public:
         std::size_t n_outer = n - k;
 
         // Build unordered_sets for O(1) membership test per dimension.
-        std::vector<std::unordered_set<std::size_t>> sets(k);
+        std::vector<std::unordered_set<int>> sets(k);
         for (std::size_t i = 0; i < k; ++i) {
             const auto& sel = selectors[i];
             if (sel.empty()) continue; // wildcard
@@ -2541,7 +2545,7 @@ public:
                             " is outside range 0.." +
                             std::to_string(static_cast<int>(idim.group_lengths[0]) - 1));
                 }
-                sets[i].insert(static_cast<std::size_t>(idx));
+                sets[i].insert(idx);
             }
         }
 
@@ -2552,7 +2556,7 @@ public:
         std::vector<std::size_t> row_indices;
         row_indices.reserve(num_rows());
         for (std::size_t r = 0; r < num_rows(); ++r) {
-            std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
+            std::vector<int> mi = multi_index_at(r, mi_ctx);
             bool keep = true;
             for (std::size_t i = 0; i < k; ++i) {
                 if (sets[i].empty()) continue; // wildcard
@@ -2658,10 +2662,10 @@ public:
             auto& mi_ctx = get_mi_ctx();
             std::vector<std::size_t> row_indices;
             row_indices.reserve(num_rows());
-            std::vector<std::size_t> prev_prefix(n_outer, 0);
+            std::vector<int> prev_prefix(n_outer, 0);
             bool has_prev = false;
             for (std::size_t r = 0; r < num_rows(); ++r) {
-                std::vector<std::size_t> mi = multi_index_at(r, mi_ctx);
+                std::vector<int> mi = multi_index_at(r, mi_ctx);
                 bool changed = !has_prev;
                 if (!changed) {
                     for (std::size_t i = 0; i < n_outer; ++i) {

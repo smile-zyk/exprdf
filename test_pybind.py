@@ -201,14 +201,14 @@ c_u = df_u.copy()
 assert c_u.column_quantity("current") == "current"
 print("PASSED")
 
-print("\n=== Python Test 14: insert_column / prepend_column ===")
+print("\n=== Python Test 14: insert_column ===")
 df_ins = pdf.DataFrame()
 df_ins.add_column("a", [1, 2, 3])
 df_ins.add_column("c", [7, 8, 9])
 df_ins.insert_column(1, "b", [4, 5, 6])
 assert df_ins.column_names() == ["a", "b", "c"]
 assert df_ins["b"] == [4, 5, 6]
-df_ins.prepend_column("z", [0.1, 0.2, 0.3])
+df_ins.insert_column(0, "z", [0.1, 0.2, 0.3])
 assert df_ins.column_names()[0] == "z"
 assert df_ins.num_columns() == 4
 # Insert at end
@@ -1361,8 +1361,8 @@ df_b6.add_column("v", [10.0, 20.0])
 df_b6.add_list_column("S", [[1.0, 2.0], [3.0, 4.0]])
 df_b6.add_matrix_column("M", [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
 
-# column_kind enum
-assert df_b6.column_kind("f") == pdf.ColumnKind.Independent
+# column_kind enum (shape-only classification)
+assert df_b6.column_kind("f") == pdf.ColumnKind.Scalar
 assert df_b6.column_kind("v") == pdf.ColumnKind.Scalar
 assert df_b6.column_kind("S") == pdf.ColumnKind.List
 assert df_b6.column_kind("M") == pdf.ColumnKind.Matrix

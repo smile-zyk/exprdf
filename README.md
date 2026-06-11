@@ -183,11 +183,10 @@ print(df_y.to_string())       # shows Y(1,1)  Y(1,2)  Y(2,1)  Y(2,2)
 
 ## Column Classification API
 
-Each column falls into exactly one of four kinds. Use `column_kind(name)` to identify it, then pick the right access pattern.
+Each column falls into exactly one of three shape kinds. Use `column_kind(name)` to identify it, then pick the right access pattern.
 
 | Kind | C++ enum | Python enum | Meaning |
 |---|---|---|---|
-| Independent | `ColumnKind::Independent` | `ColumnKind.Independent` | Index dimension (use `loc`, `flat_index`, etc.) |
 | Scalar | `ColumnKind::Scalar` | `ColumnKind.Scalar` | Ordinary data column, single value per row |
 | List | `ColumnKind::List` | `ColumnKind.List` | 1-D array per row; access with `get_list_element(name,k)` / `df.name(k)` |
 | Matrix | `ColumnKind::Matrix` | `ColumnKind.Matrix` | 2-D array per row; access with `get_matrix_element(name,i,j)` / `df.name(i,j)` |
@@ -222,9 +221,7 @@ Each column falls into exactly one of four kinds. Use `column_kind(name)` to ide
 ```python
 for col in df.column_names():
     kind = df.column_kind(col)
-    if kind == pdf.ColumnKind.Independent:
-        pass  # index dim — use df.loc / df.get_index_dim
-    elif kind == pdf.ColumnKind.Scalar:
+    if kind == pdf.ColumnKind.Scalar:
         data = df.get_column(col)          # list of scalar values
     elif kind == pdf.ColumnKind.List:
         n = df.column_shape(col)[0]        # list length per row

@@ -47,6 +47,19 @@ OpSpec make_op(
     return spec;
 }
 
+OpSpec make_op_legacy(
+    const char* name,
+    const std::vector<ArgSpec>& args,
+    std::size_t min_args,
+    std::size_t max_args,
+    py::object (*impl)(const py::args&),
+    const char* doc,
+    bool export_to_module,
+    ModuleBindMode bind_mode)
+{
+    return make_op(name, args, min_args, max_args, impl, doc, export_to_module, bind_mode);
+}
+
 std::vector<ArgSpec> prepend_df_arg(std::initializer_list<ArgSpec> tail_args) {
     std::vector<ArgSpec> args;
     args.reserve(1 + tail_args.size());
@@ -64,17 +77,6 @@ OpSpec make_internal_op(
     const char* doc)
 {
     return make_op(name, std::vector<ArgSpec>(args), min_args, max_args, impl, doc, false, ModuleBindMode::None);
-}
-
-OpSpec make_export_op_legacy(
-    const char* name,
-    std::initializer_list<ArgSpec> args,
-    std::size_t min_args,
-    std::size_t max_args,
-    py::object (*impl)(const py::args&),
-    const char* doc)
-{
-    return make_op(name, std::vector<ArgSpec>(args), min_args, max_args, impl, doc, true, ModuleBindMode::LegacyArgs);
 }
 
 OpSpec make_export_op_df_first(
@@ -152,12 +154,25 @@ int numeric_rank(DType t) {
     }
 }
 
-std::vector<double> to_double_vec(const Column& col) {
+std::vector<double> to_double_vec(
+    const Column& col,
+    const std::function<double(const DComplex&)>& complex_to_double = nullptr) {
     if (col.tag == DType::Int) {
         const auto& src = col.as<int>();
         return std::vector<double>(src.begin(), src.end());
     }
     if (col.tag == DType::Double) return col.as<double>();
+    if (col.tag == DType::Complex) {
+        if (!complex_to_double) {
+            throw std::invalid_argument(
+                "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to double");
+        }
+        std::vector<double> out;
+        const auto& src = col.as<DComplex>();
+        out.reserve(src.size());
+        for (const auto& z : src) out.push_back(complex_to_double(z));
+        return out;
+    }
     throw std::invalid_argument(
         "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to double");
 }
@@ -182,6 +197,74 @@ std::vector<DComplex> to_complex_vec(const Column& col) {
         "Cannot widen '" + std::string(dtype_to_string(col.tag)) + "' to complex");
 }
 
+template <typename T>
+std::unique_ptr<Column> make_column_like(const Column& shape_src, const std::vector<T>& values) {
+    switch (shape_src.shape.size()) {
+        case 0:
+            return Column::from_scalar<T>(values);
+        case 1:
+            return Column::from_list_flat<T>(values, shape_src.shape[0]);
+        case 2:
+            return Column::from_matrix_flat<T>(values, shape_src.shape[0], shape_src.shape[1]);
+        default:
+            throw std::invalid_argument("Unsupported column shape");
+    }
+}
+
+template <typename T>
+std::vector<T> broadcast_rows_to_shape(const std::vector<T>& values, const Column& shape_src) {
+    const std::size_t nrows = shape_src.num_rows();
+    const std::size_t epr = shape_src.elem_per_row();
+    if (values.size() == nrows * epr) {
+        return values;
+    }
+    if (values.size() == nrows && epr == 1) {
+        return values;
+    }
+    if (values.size() == nrows) {
+        std::vector<T> out;
+        out.reserve(nrows * epr);
+        for (const auto& value : values) {
+            for (std::size_t i = 0; i < epr; ++i) {
+                out.push_back(value);
+            }
+        }
+        return out;
+    }
+    if (values.size() == 1) {
+        return std::vector<T>(nrows * epr, values[0]);
+    }
+    throw std::invalid_argument("Shape broadcast failed: row count mismatch");
+}
+
+template <typename T>
+std::vector<T> broadcast_for_binary_op(const Column& src, const std::vector<T>& values, std::size_t target_epr) {
+    const std::size_t src_epr = src.elem_per_row();
+    if (src_epr == target_epr) {
+        return values;
+    }
+    if (src_epr == 1) {
+        std::vector<T> out;
+        out.reserve(src.num_rows() * target_epr);
+        for (const auto& value : values) {
+            for (std::size_t i = 0; i < target_epr; ++i) {
+                out.push_back(value);
+            }
+        }
+        return out;
+    }
+    throw std::invalid_argument("Shape mismatch between list/matrix columns");
+}
+
+template <typename T>
+void replace_last_with_same_shape(const std::shared_ptr<DataFrame>& df,
+                                  const Column& shape_src,
+                                  const std::vector<T>& values) {
+    auto nc = make_column_like<T>(shape_src, values);
+    nc->quantity = shape_src.quantity;
+    df->replace_last_column(std::move(nc));
+}
+
 template<typename Op>
 std::shared_ptr<DataFrame> apply_binary_op_last(
     const std::shared_ptr<DataFrame>& self,
@@ -202,29 +285,34 @@ std::shared_ptr<DataFrame> apply_binary_op_last(
     if (ra < 0 || rb < 0)
         throw std::invalid_argument("Arithmetic on string columns is not supported");
 
+    const std::size_t epr_a = ca.elem_per_row();
+    const std::size_t epr_b = cb.elem_per_row();
+    const std::size_t target_epr = (epr_a >= epr_b) ? epr_a : epr_b;
+    if (epr_a != epr_b && epr_a != 1 && epr_b != 1) {
+        throw std::invalid_argument(
+            "Arithmetic on columns with different list/matrix shapes is not supported");
+    }
+
     DType rt = (ra >= rb) ? ca.tag : cb.tag;
     auto result = self->copy();
 
     if (rt == DType::Int) {
-        auto& va = result->last_column_as<int>();
-        const auto& vb = cb.as<int>();
+        std::vector<int> va = broadcast_for_binary_op(ca, ca.as<int>(), target_epr);
+        std::vector<int> vb = broadcast_for_binary_op(cb, cb.as<int>(), target_epr);
         for (std::size_t i = 0; i < va.size(); ++i) va[i] = op(va[i], vb[i]);
+        replace_last_with_same_shape(result, ca, va);
     } else if (rt == DType::Double) {
-        std::vector<double> va = to_double_vec(ca);
-        std::vector<double> vb = to_double_vec(cb);
+        std::vector<double> va = broadcast_for_binary_op(ca, to_double_vec(ca), target_epr);
+        std::vector<double> vb = broadcast_for_binary_op(cb, to_double_vec(cb), target_epr);
         std::vector<double> vc(va.size());
         for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
-        Column nc = make_column<double>(vc);
-        nc.quantity = ca.quantity;
-        result->last_column() = std::move(nc);
+        replace_last_with_same_shape(result, ca, vc);
     } else {
-        std::vector<DComplex> va = to_complex_vec(ca);
-        std::vector<DComplex> vb = to_complex_vec(cb);
+        std::vector<DComplex> va = broadcast_for_binary_op(ca, to_complex_vec(ca), target_epr);
+        std::vector<DComplex> vb = broadcast_for_binary_op(cb, to_complex_vec(cb), target_epr);
         std::vector<DComplex> vc(va.size());
         for (std::size_t i = 0; i < va.size(); ++i) vc[i] = op(va[i], vb[i]);
-        Column nc = make_column<DComplex>(vc);
-        nc.quantity = ca.quantity;
-        result->last_column() = std::move(nc);
+        replace_last_with_same_shape(result, ca, vc);
     }
     return result;
 }
@@ -254,10 +342,15 @@ std::shared_ptr<DataFrame> array_to_df(
     self->ensure_has_columns();
 
     const std::string& cname = self->last_column_name();
+    const Column& shape_src = self->last_column();
     auto tmp = std::make_shared<DataFrame>();
-    tmp->add_column<T>(
-        cname,
-        n == 1 ? std::vector<T>(nrows, ptr[0]) : std::vector<T>(ptr, ptr + n));
+    std::vector<T> values = (n == 1)
+        ? std::vector<T>(nrows, ptr[0])
+        : std::vector<T>(ptr, ptr + n);
+    values = broadcast_rows_to_shape(values, shape_src);
+    auto nc = make_column_like<T>(shape_src, values);
+    nc->quantity = shape_src.quantity;
+    tmp->add_column(cname, std::move(nc));
     return tmp;
 }
 
@@ -268,21 +361,28 @@ std::shared_ptr<DataFrame> scalar_to_df(
     self->ensure_has_columns();
     const std::string& cname = self->last_column_name();
     const std::size_t nrows = self->num_rows();
+    const Column& shape_src = self->last_column();
 
     auto tmp = std::make_shared<DataFrame>();
     if (PyComplex_Check(value.ptr())) {
         auto c = py::cast<DComplex>(value);
-        tmp->add_column<DComplex>(cname, std::vector<DComplex>(nrows, c));
+        auto nc = make_column_like<DComplex>(shape_src, std::vector<DComplex>(nrows, c));
+        nc->quantity = shape_src.quantity;
+        tmp->add_column(cname, std::move(nc));
         return tmp;
     }
     if (py::isinstance<py::float_>(value)) {
         auto d = py::cast<double>(value);
-        tmp->add_column<double>(cname, std::vector<double>(nrows, d));
+        auto nc = make_column_like<double>(shape_src, std::vector<double>(nrows, d));
+        nc->quantity = shape_src.quantity;
+        tmp->add_column(cname, std::move(nc));
         return tmp;
     }
     if (py::isinstance<py::int_>(value) && !py::isinstance<py::bool_>(value)) {
         auto i = py::cast<int>(value);
-        tmp->add_column<int>(cname, std::vector<int>(nrows, i));
+        auto nc = make_column_like<int>(shape_src, std::vector<int>(nrows, i));
+        nc->quantity = shape_src.quantity;
+        tmp->add_column(cname, std::move(nc));
         return tmp;
     }
 
@@ -300,17 +400,23 @@ std::shared_ptr<DataFrame> scalar_to_df(
                         throw py::type_error(
                             std::string(op_name) + " integer scalar out of int range");
                     }
-                    tmp->add_column<int>(cname, std::vector<int>(nrows, static_cast<int>(v)));
+                    auto nc = make_column_like<int>(shape_src, std::vector<int>(nrows, static_cast<int>(v)));
+                    nc->quantity = shape_src.quantity;
+                    tmp->add_column(cname, std::move(nc));
                     return tmp;
                 }
                 if (k == 'f') {
                     double d = py::cast<double>(value);
-                    tmp->add_column<double>(cname, std::vector<double>(nrows, d));
+                    auto nc = make_column_like<double>(shape_src, std::vector<double>(nrows, d));
+                    nc->quantity = shape_src.quantity;
+                    tmp->add_column(cname, std::move(nc));
                     return tmp;
                 }
                 if (k == 'c') {
                     DComplex c = py::cast<DComplex>(value);
-                    tmp->add_column<DComplex>(cname, std::vector<DComplex>(nrows, c));
+                    auto nc = make_column_like<DComplex>(shape_src, std::vector<DComplex>(nrows, c));
+                    nc->quantity = shape_src.quantity;
+                    tmp->add_column(cname, std::move(nc));
                     return tmp;
                 }
             }
@@ -369,9 +475,9 @@ std::shared_ptr<DataFrame> unary_to_double(
         case DType::String:
             throw std::invalid_argument("unary op: string columns not supported");
     }
-    Column nc = make_column<double>(out);
-    nc.quantity = cc.quantity;
-    return self->copy_with_last_column(nc);
+        auto result = self->copy();
+        replace_last_with_same_shape(result, cc, out);
+        return result;
 }
 
 std::shared_ptr<DataFrame> unary_promote(
@@ -387,17 +493,21 @@ std::shared_ptr<DataFrame> unary_promote(
             std::vector<double> out;
             out.reserve(cc.size());
             for (auto x : cc.as<int>()) out.push_back(fn_d(x));
-            Column nc = make_column<double>(out);
-            nc.quantity = cc.quantity;
-            r->last_column() = std::move(nc);
+            replace_last_with_same_shape(r, cc, out);
             break;
         }
-        case DType::Double:
-            for (auto& x : r->last_column_as<double>()) x = fn_d(x);
+        case DType::Double: {
+            std::vector<double> d = r->last_column_as<double>();
+            for (auto& x : d) x = fn_d(x);
+            replace_last_with_same_shape(r, cc, d);
             break;
-        case DType::Complex:
-            for (auto& z : r->last_column_as<DComplex>()) z = fn_c(z);
+        }
+        case DType::Complex: {
+            std::vector<DComplex> d = r->last_column_as<DComplex>();
+            for (auto& z : d) z = fn_c(z);
+            replace_last_with_same_shape(r, cc, d);
             break;
+        }
         case DType::String:
             throw std::invalid_argument("unary op: string columns not supported");
     }
@@ -408,15 +518,21 @@ std::shared_ptr<DataFrame> negate_last(const std::shared_ptr<DataFrame>& df) {
     df->ensure_has_columns();
     auto r = df->copy();
     switch (df->last_column().tag) {
-        case DType::Int:
-            for (auto& x : r->last_column_as<int>()) x = -x;
-            break;
-        case DType::Double:
-            for (auto& x : r->last_column_as<double>()) x = -x;
-            break;
-        case DType::Complex:
-            for (auto& z : r->last_column_as<DComplex>()) z = -z;
-            break;
+        case DType::Int: {
+            std::vector<int> d = r->last_column_as<int>();
+            for (auto& x : d) x = -x;
+            replace_last_with_same_shape(r, df->last_column(), d); break;
+        }
+        case DType::Double: {
+            std::vector<double> d = r->last_column_as<double>();
+            for (auto& x : d) x = -x;
+            replace_last_with_same_shape(r, df->last_column(), d); break;
+        }
+        case DType::Complex: {
+            std::vector<DComplex> d = r->last_column_as<DComplex>();
+            for (auto& z : d) z = -z;
+            replace_last_with_same_shape(r, df->last_column(), d); break;
+        }
         case DType::String:
             throw std::invalid_argument("unary -: string columns not supported");
     }
@@ -449,7 +565,8 @@ std::shared_ptr<DataFrame> df_handle_to_ptr(py::handle value) {
         return value.cast<std::shared_ptr<DataFrame>>();
     } catch (const py::cast_error&) {
         DataFrame& ref = value.cast<DataFrame&>();
-        return std::shared_ptr<DataFrame>(&ref, [](DataFrame*) {});
+        py::object owner = py::reinterpret_borrow<py::object>(value);
+        return std::shared_ptr<DataFrame>(&ref, [owner](DataFrame*) {});
     }
 }
 
@@ -558,19 +675,21 @@ py::object op_abs(const py::args& args) {
     const Column& cc = df->last_column();
     auto r = df->copy();
     switch (cc.tag) {
-        case DType::Int:
-            for (auto& x : r->last_column_as<int>()) x = std::abs(x);
-            break;
-        case DType::Double:
-            for (auto& x : r->last_column_as<double>()) x = std::abs(x);
-            break;
+        case DType::Int: {
+            std::vector<int> d = cc.as<int>();
+            for (auto& x : d) x = std::abs(x);
+            replace_last_with_same_shape(r, cc, d); break;
+        }
+        case DType::Double: {
+            std::vector<double> d = cc.as<double>();
+            for (auto& x : d) x = std::abs(x);
+            replace_last_with_same_shape(r, cc, d); break;
+        }
         case DType::Complex: {
             const auto& src = cc.as<DComplex>();
             std::vector<double> out(src.size());
             for (std::size_t i = 0; i < src.size(); ++i) out[i] = std::abs(src[i]);
-            Column nc = make_column<double>(out);
-            nc.quantity = cc.quantity;
-            r->last_column() = std::move(nc);
+            replace_last_with_same_shape(r, cc, out);
             break;
         }
         case DType::String:
@@ -640,25 +759,32 @@ py::object op_wtodBm(const py::args& args) {
         case DType::String:
             throw std::invalid_argument("wtodBm: string columns not supported");
     }
-    Column nc = make_column<double>(out);
-    nc.quantity = cc.quantity;
-    return py::cast(df->copy_with_last_column(nc));
+    auto result = df->copy();
+    replace_last_with_same_shape(result, cc, out);
+    return py::cast(result);
 }
 
 py::object op_sqr(const py::args& args) {
     std::shared_ptr<DataFrame> df = require_df_arg(args, 0);
     df->ensure_has_columns();
     auto r = df->copy();
-    switch (df->last_column().tag) {
-        case DType::Int:
-            for (auto& x : r->last_column_as<int>()) x = x * x;
-            break;
-        case DType::Double:
-            for (auto& x : r->last_column_as<double>()) x = x * x;
-            break;
-        case DType::Complex:
-            for (auto& z : r->last_column_as<DComplex>()) z = z * z;
-            break;
+    const Column& cc = df->last_column();
+    switch (cc.tag) {
+        case DType::Int: {
+            std::vector<int> d = cc.as<int>();
+            for (auto& x : d) x = x * x;
+            replace_last_with_same_shape(r, cc, d); break;
+        }
+        case DType::Double: {
+            std::vector<double> d = cc.as<double>();
+            for (auto& x : d) x = x * x;
+            replace_last_with_same_shape(r, cc, d); break;
+        }
+        case DType::Complex: {
+            std::vector<DComplex> d = cc.as<DComplex>();
+            for (auto& z : d) z = z * z;
+            replace_last_with_same_shape(r, cc, d); break;
+        }
         case DType::String:
             throw std::invalid_argument("sqr: string columns not supported");
     }
@@ -706,9 +832,11 @@ py::object op_conj(const py::args& args) {
         case DType::Int:
         case DType::Double:
             break;
-        case DType::Complex:
-            for (auto& z : r->last_column_as<DComplex>()) z = std::conj(z);
-            break;
+        case DType::Complex: {
+            std::vector<DComplex> d = cc.as<DComplex>();
+            for (auto& z : d) z = std::conj(z);
+            replace_last_with_same_shape(r, cc, d); break;
+        }
         case DType::String:
             throw std::invalid_argument("conj: string columns not supported");
     }
@@ -736,9 +864,9 @@ py::object op_zin(const py::args& args) {
         out.push_back(z0 * (DComplex(1.0, 0.0) + src[i]) / denom);
     }
 
-    Column nc = make_column<DComplex>(out);
-    nc.quantity = cc.quantity;
-    return py::cast(df->copy_with_last_column(nc));
+    auto result = df->copy();
+    replace_last_with_same_shape(result, cc, out);
+    return py::cast(result);
 }
 
 const std::vector<OpSpec>& all_ops() {

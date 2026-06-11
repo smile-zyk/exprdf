@@ -62,11 +62,10 @@ void bind_types_and_dataframe(py::module_& m) {
     // ----------------------------------------------------------------
     // ColumnKind enum
     // ----------------------------------------------------------------
-    py::enum_<exprdf::DataFrame::ColumnKind>(m, "ColumnKind")
-        .value("Independent", exprdf::DataFrame::ColumnKind::Independent)
-        .value("Scalar",      exprdf::DataFrame::ColumnKind::Scalar)
-        .value("List",        exprdf::DataFrame::ColumnKind::List)
-        .value("Matrix",      exprdf::DataFrame::ColumnKind::Matrix)
+    py::enum_<exprdf::Column::ColumnKind>(m, "ColumnKind")
+        .value("Scalar",      exprdf::Column::ColumnKind::Scalar)
+        .value("List",        exprdf::Column::ColumnKind::List)
+        .value("Matrix",      exprdf::Column::ColumnKind::Matrix)
         .export_values();
 
     // ----------------------------------------------------------------
@@ -108,7 +107,9 @@ void bind_types_and_dataframe(py::module_& m) {
             }
             return py::none();
         })
-        .def_property_readonly("quantity", [](const exprdf::IndexDim& d) { return d.levels->quantity; })
+        .def_property_readonly("quantity", [](const exprdf::IndexDim& d) {
+            return d.levels ? d.levels->quantity : std::string();
+        })
         .def_property_readonly("group_lengths", [](const exprdf::IndexDim& d) { return d.group_lengths; })
         .def_property_readonly("num_outer", [](const exprdf::IndexDim& d) { return d.num_outer; })
         .def_property_readonly("level_count", [](const exprdf::IndexDim& d) { return d.level_count(); })
@@ -218,48 +219,6 @@ void bind_types_and_dataframe(py::module_& m) {
             }
         }, py::arg("pos"), py::arg("name"), py::arg("data"), py::arg("quantity") = "",
            "Insert a column at position (type auto-detected)")
-
-        // prepend_column: insert at beginning with auto-detect type
-        .def("prepend_column", [](exprdf::DataFrame& self, const std::string& name, py::list data, const std::string& quantity) {
-            if (data.empty()) {
-                self.prepend_column<double>(name, {}, quantity);
-                return;
-            }
-            py::object first = data[0];
-            if (py::isinstance<py::str>(first)) {
-                std::vector<std::string> v;
-                for (auto item : data) v.push_back(item.cast<std::string>());
-                self.prepend_column<std::string>(name, v, quantity);
-            } else if (py::isinstance<py::int_>(first) && !py::isinstance<py::bool_>(first)) {
-                bool has_float = false, has_complex = false;
-                for (auto item : data) {
-                    if (py::isinstance<py::float_>(item)) has_float = true;
-                    if (PyComplex_Check(item.ptr())) has_complex = true;
-                }
-                if (has_complex) {
-                    std::vector<std::complex<double>> v;
-                    for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                    self.prepend_column<std::complex<double>>(name, v, quantity);
-                } else if (has_float) {
-                    std::vector<double> v;
-                    for (auto item : data) v.push_back(item.cast<double>());
-                    self.prepend_column<double>(name, v, quantity);
-                } else {
-                    std::vector<int> v;
-                    for (auto item : data) v.push_back(item.cast<int>());
-                    self.prepend_column<int>(name, v, quantity);
-                }
-            } else if (PyComplex_Check(first.ptr())) {
-                std::vector<std::complex<double>> v;
-                for (auto item : data) v.push_back(item.cast<std::complex<double>>());
-                self.prepend_column<std::complex<double>>(name, v, quantity);
-            } else {
-                std::vector<double> v;
-                for (auto item : data) v.push_back(item.cast<double>());
-                self.prepend_column<double>(name, v, quantity);
-            }
-        }, py::arg("name"), py::arg("data"), py::arg("quantity") = "",
-           "Insert a column at the beginning (type auto-detected)")
 
         // ----------------------------------------------------------------
         // Element access
@@ -453,10 +412,6 @@ void bind_types_and_dataframe(py::module_& m) {
         .def("set_matrix_row", [](exprdf::DataFrame& self, const std::string& name,
                                   std::size_t row, py::list data) {
             std::string dt = self.column_dtype(name);
-            auto to_row = [](py::handle h) {
-                py::list inner = h.cast<py::list>();
-                return inner;
-            };
             if (dt == "double") {
                 std::vector<std::vector<double>> mat;
                 for (auto r : data) {
@@ -548,8 +503,11 @@ void bind_types_and_dataframe(py::module_& m) {
             throw py::type_error("Expected str column name or int row index");
         })
         .def("__getattr__", [](std::shared_ptr<exprdf::DataFrame> self, const std::string& name) -> py::object {
-            if (!self->has_column(name))
-                throw py::attribute_error("DataFrame has no attribute '" + name + "'");
+            if (!self->has_column(name)) {
+                std::string msg = "DataFrame has no attribute '" + name + "'";
+                PyErr_SetString(PyExc_AttributeError, msg.c_str());
+                throw py::error_already_set();
+            }
             // List / matrix columns return a callable proxy.
             auto sh = self->column_shape(name);
             if (!sh.empty())

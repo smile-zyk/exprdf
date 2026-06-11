@@ -53,23 +53,20 @@ int main() {
     assert(last_const.as<double>().size() == 3);
     assert(last_const.as<double>()[1] == 20.0);
 
-    // mutable last_column() returns a writable reference.
-    auto& last_mut = df_ref.last_column();
-    last_mut.as<double>()[1] = 25.0;
+    // mutate via set() API.
+    df_ref.set<double>("b", 1, 25.0);
     assert(df_ref.at<double>("b", 1) == 25.0);
 
-    // get_column(index) keeps reference semantics.
+    // get_column(index) returns const reference only.
     const auto& col_a_const = cdf_ref.get_column(static_cast<std::size_t>(0));
     assert(col_a_const.tag == exprdf::DType::Int);
-    auto& col_a_mut = df_ref.get_column(static_cast<std::size_t>(0));
-    col_a_mut.as<int>()[2] = 42;
+    df_ref.set<int>("a", 2, 42);
     assert(df_ref.at<int>("a", 2) == 42);
 
-    // get_column(name) keeps reference semantics.
+    // get_column(name) returns const reference only.
     const auto& col_b_const = cdf_ref.get_column("b");
     assert(col_b_const.as<double>()[0] == 10.0);
-    auto& col_b_mut = df_ref.get_column("b");
-    col_b_mut.as<double>()[0] = 11.0;
+    df_ref.set<double>("b", 0, 11.0);
     assert(df_ref.at<double>("b", 0) == 11.0);
 
     // 5) DataFrame deep copy compatibility (copy ctor / copy assignment).
@@ -155,6 +152,25 @@ int main() {
     assert(df_g_first_groups.at<int>("gg", 0) == 7);
     assert(df_g_first_groups.at<int>("gg", 1) == 8);
     assert(df_g_first_groups.at<int>("gg", 2) == 9);
+
+    // 7b) innermost_slices: one slice per outer prefix, keeping the last index free.
+    DataFrame df_sweep;
+    df_sweep.add_uniform_index<int>("a", std::vector<int>{1, 2});
+    df_sweep.add_uniform_index<int>("b", std::vector<int>{10, 20, 30});
+    df_sweep.add_column<double>("v", std::vector<double>{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+
+    auto slices = df_sweep.innermost_slices();
+    assert(slices.size() == 2);
+    assert((slices[0].outer_index == std::vector<int>{0}));
+    assert((slices[1].outer_index == std::vector<int>{1}));
+    assert(slices[0].dataframe->num_rows() == 3);
+    assert(slices[1].dataframe->num_rows() == 3);
+    assert(slices[0].dataframe->num_indices() == 1);
+    assert(slices[1].dataframe->num_indices() == 1);
+    assert(slices[0].dataframe->at<double>("v", 0) == 1.0);
+    assert(slices[0].dataframe->at<double>("v", 2) == 3.0);
+    assert(slices[1].dataframe->at<double>("v", 0) == 4.0);
+    assert(slices[1].dataframe->at<double>("v", 2) == 6.0);
 
     {
         DataFrame df_bad;

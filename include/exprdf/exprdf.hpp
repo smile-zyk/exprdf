@@ -149,9 +149,6 @@ struct ColumnStorage : ColumnStorageBase {
 
     std::size_t size() const override { return data.size(); }
 
-    const std::vector<T>& as() const { return data; }
-    std::vector<T>& as() { return data; }
-
     std::string to_string_at(std::size_t row) const override {
         return column_val_to_string<T>(data.at(row));
     }
@@ -225,6 +222,8 @@ struct ColumnStorage : ColumnStorageBase {
 // ============================================================
 class Column {
 public:
+    enum class ColumnKind { Scalar, List, Matrix };
+
     DType tag;
     std::string quantity;              // quantity key, e.g. "voltage" or "frequency"
     std::vector<std::size_t> shape;    // [] = scalar, {n} = 1-D list, {m,n} = 2-D matrix
@@ -528,6 +527,12 @@ public:
     }
 
     std::size_t size() const { return storage_->size(); }
+
+    ColumnKind kind() const {
+        if (shape.empty()) return ColumnKind::Scalar;
+        if (shape.size() == 1) return ColumnKind::List;
+        return ColumnKind::Matrix;
+    }
 
     // Number of conceptual rows.
     std::size_t num_rows() const {
@@ -951,12 +956,44 @@ private:
 // make_column<T>: construct a Column from a typed vector.
 // Unsupported types produce a compile error (no DTypeTag<T> specialisation).
 template <typename T>
-inline Column make_column(const std::vector<T>& data);
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data);
 
-template <> inline Column make_column<int>(const std::vector<int>& v)                                   { return *Column::from_scalar<int>(v); }
-template <> inline Column make_column<double>(const std::vector<double>& v)                              { return *Column::from_scalar<double>(v); }
-template <> inline Column make_column<std::string>(const std::vector<std::string>& v)                    { return *Column::from_scalar<std::string>(v); }
-template <> inline Column make_column<std::complex<double>>(const std::vector<std::complex<double>>& v)  { return *Column::from_scalar<std::complex<double>>(v); }
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data, std::size_t list_size);
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<std::vector<T>>& rows);
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data, std::size_t mrows, std::size_t mcols);
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<std::vector<std::vector<T>>>& rows);
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data) {
+    return Column::from_scalar<T>(data);
+}
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data, std::size_t list_size) {
+    return Column::from_list_flat<T>(data, list_size);
+}
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<std::vector<T>>& rows) {
+    return Column::from_list<T>(rows);
+}
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<T>& data, std::size_t mrows, std::size_t mcols) {
+    return Column::from_matrix_flat<T>(data, mrows, mcols);
+}
+
+template <typename T>
+inline std::unique_ptr<Column> make_column(const std::vector<std::vector<std::vector<T>>>& rows) {
+    return Column::from_matrix<T>(rows);
+}
 
 // ============================================================
 // IndexKind / IndexDim -- multi-index dimension descriptors
@@ -1049,9 +1086,9 @@ struct IndexDim {
                                    const std::vector<T>& lvls,
                                    const std::string& quantity = "",
                                    std::size_t num_outer = 1) {
-        Column col = make_column<T>(lvls);
-        col.quantity = quantity;
-        return {name, IndexKind::Uniform, col, {}, num_outer};
+        auto col = make_column<T>(lvls);
+        col->quantity = quantity;
+        return {name, IndexKind::Uniform, *col, {}, num_outer};
     }
 
     static IndexDim create_uniform(const std::string& name, Column lvls,
@@ -1129,9 +1166,9 @@ public:
             throw std::invalid_argument("Column '" + name + "' already exists");
         }
         col_order_.push_back(name);
-        Column col = make_column<T>(data);
-        col.quantity = quantity;
-        columns_[name].reset(new Column(std::move(col)));
+        auto col = make_column<T>(data);
+        col->quantity = quantity;
+        columns_[name] = std::move(col);
     }
 
     // Add an already-constructed Column (scalar/list/matrix).
@@ -1189,15 +1226,9 @@ public:
                 " out of range (size=" + std::to_string(col_order_.size()) + ")");
         }
         col_order_.insert(col_order_.begin() + pos, name);
-        Column col = make_column<T>(data);
-        col.quantity = quantity;
-        columns_[name].reset(new Column(std::move(col)));
-    }
-
-    template <typename T>
-    void prepend_column(const std::string& name, const std::vector<T>& data,
-                        const std::string& quantity = "") {
-        insert_column<T>(0, name, data, quantity);
+        auto col = make_column<T>(data);
+        col->quantity = quantity;
+        columns_[name] = std::move(col);
     }
 
     // add_list_column: each row holds a fixed-length list of T.
@@ -1233,11 +1264,11 @@ public:
         flat.reserve(data.size() * n);
         for (const auto& row : data)
             flat.insert(flat.end(), row.begin(), row.end());
-        Column col = make_column<T>(flat);
-        col.quantity = quantity;
-        col.shape = {n};
+        auto col = make_column<T>(flat);
+        col->quantity = quantity;
+        col->shape = {n};
         col_order_.push_back(name);
-        columns_[name].reset(new Column(std::move(col)));
+        columns_[name] = std::move(col);
     }
 
     // add_matrix_column: each row holds a fixed mxn matrix of T (row-major).
@@ -1282,11 +1313,11 @@ public:
         for (const auto& mat : data)
             for (const auto& row : mat)
                 flat.insert(flat.end(), row.begin(), row.end());
-        Column col = make_column<T>(flat);
-        col.quantity = quantity;
-        col.shape = {mrows, mcols};
+        auto col = make_column<T>(flat);
+        col->quantity = quantity;
+        col->shape = {mrows, mcols};
         col_order_.push_back(name);
-        columns_[name].reset(new Column(std::move(col)));
+        columns_[name] = std::move(col);
     }
 
     void remove_column(const std::string& name) {
@@ -1337,25 +1368,12 @@ public:
         return get_col(last_column_name());
     }
 
-    Column& last_column() {
-        return get_col(last_column_name());
-    }
-
     template <typename T>
     const std::vector<T>& last_column_as() const {
         return get_column_as<T>(last_column_name());
     }
 
-    template <typename T>
-    std::vector<T>& last_column_as() {
-        return get_column_as<T>(last_column_name());
-    }
-
     const Column& get_column(std::size_t index) const {
-        return get_col(column_name(index));
-    }
-
-    Column& get_column(std::size_t index) {
         return get_col(column_name(index));
     }
 
@@ -1364,19 +1382,10 @@ public:
         return get_column_as<T>(column_name(index));
     }
 
-    template <typename T>
-    std::vector<T>& get_column_as(std::size_t index) {
-        return get_column_as<T>(column_name(index));
-    }
-
     // --- Column access (by name) ---
     // Throws std::invalid_argument when the column is not found.
 
     const Column& get_column(const std::string& name) const {
-        return get_col(name);
-    }
-
-    Column& get_column(const std::string& name) {
         return get_col(name);
     }
 
@@ -1390,14 +1399,23 @@ public:
         return col.as<T>();
     }
 
-    template <typename T>
-    std::vector<T>& get_column_as(const std::string& name) {
-        Column& col = get_col(name);
-        if (col.tag != DTypeTag<T>::value) {
-            throw std::invalid_argument(
-                "Column '" + name + "' type mismatch, stored as " + col.dtype_name());
+    // Replace the last column explicitly.
+    void replace_last_column(std::unique_ptr<Column> col) {
+        ensure_has_columns();
+        const std::string& ln = last_column_name();
+        const Column& current = get_col(ln);
+        if (!col) {
+            throw std::invalid_argument("replace_last_column: column pointer is null");
         }
-        return col.as<T>();
+        if (col->num_rows() != num_rows()) {
+            throw std::invalid_argument(
+                "replace_last_column: row count mismatch, got " + std::to_string(col->num_rows()) +
+                ", expected " + std::to_string(num_rows()));
+        }
+        if (col->shape != current.shape) {
+            throw std::invalid_argument("replace_last_column: shape mismatch with existing last column");
+        }
+        columns_[ln] = std::move(col);
     }
 
     std::string column_dtype(const std::string& name) const {
@@ -1653,13 +1671,6 @@ public:
         return result;
     }
 
-    // copy_with_last_column: deep-copy the DataFrame and replace the last column.
-    std::shared_ptr<DataFrame> copy_with_last_column(const Column& col) const {
-        auto result = copy();
-        result->last_column() = col;
-        return result;
-    }
-
     // --- Multi-index construction ---
 
     // add_uniform_index: append a Uniform dimension.
@@ -1684,9 +1695,9 @@ public:
         if (old_rows == 0) {
             // First index: add levels as column data directly
             col_order_.push_back(name);
-            Column col = make_column<T>(levels);
-            col.quantity = quantity;
-            columns_[name].reset(new Column(std::move(col)));
+            auto col = make_column<T>(levels);
+            col->quantity = quantity;
+            columns_[name] = std::move(col);
         } else {
             // Expand existing columns: repeat each value new_n times
             for (auto& pair : columns_) {
@@ -1694,9 +1705,9 @@ public:
             }
             // Add new column: tile levels old_rows times
             col_order_.push_back(name);
-            Column col = make_column<T>(levels);
-            col.quantity = quantity;
-            columns_[name].reset(new Column(col.tile(old_rows)));
+            auto col = make_column<T>(levels);
+            col->quantity = quantity;
+            columns_[name].reset(new Column(col->tile(old_rows)));
         }
 
         index_dims_.push_back(IndexDim::create_uniform(name, levels, quantity, outer));
@@ -1783,9 +1794,9 @@ public:
             }
         }
         col_order_.push_back(name);
-        Column col = make_column<T>(values);
-        col.quantity = quantity;
-        columns_[name].reset(new Column(std::move(col)));
+        auto col = make_column<T>(values);
+        col->quantity = quantity;
+        columns_[name] = std::move(col);
 
         if (old_rows == 0)
             index_dims_.push_back(IndexDim::create_grouped(name, std::vector<std::size_t>(1, group_size), quantity));
@@ -1844,9 +1855,9 @@ public:
             flat.insert(flat.end(), g.begin(), g.end());
 
         col_order_.push_back(name);
-        Column col = make_column<T>(flat);
-        col.quantity = quantity;
-        columns_[name].reset(new Column(std::move(col)));
+        auto col = make_column<T>(flat);
+        col->quantity = quantity;
+        columns_[name] = std::move(col);
 
         index_dims_.push_back(IndexDim::create_grouped(name, lengths, quantity));
         mi_ctx_valid_ = false;
@@ -2010,21 +2021,14 @@ public:
         return get_col(name).shape.size() == 2;
     }
 
-    // column_kind: single call to classify a column fully.
-    //   Independent  -- index/independent dimension (scalar)
-    //   Scalar       -- dependent, no shape (ordinary column)
-    //   List         -- dependent with 1-D shape  (list column)
-    //   Matrix       -- dependent with 2-D shape  (matrix column)
-    enum class ColumnKind { Independent, Scalar, List, Matrix };
-
-    ColumnKind column_kind(const std::string& name) const {
+    // column_kind: classify by column shape only.
+    //   Scalar -- no shape
+    //   List   -- 1-D shape
+    //   Matrix -- 2-D shape
+    Column::ColumnKind column_kind(const std::string& name) const {
         if (!has_column(name))
             throw std::invalid_argument("Column '" + name + "' not found");
-        if (is_index(name)) return ColumnKind::Independent;
-        const auto& sh = get_col(name).shape;
-        if (sh.empty())   return ColumnKind::Scalar;
-        if (sh.size() == 1) return ColumnKind::List;
-        return ColumnKind::Matrix;
+        return get_col(name).kind();
     }
 
     std::vector<std::string> dependent_names() const {
@@ -2421,7 +2425,11 @@ public:
             std::vector<int> result(n);
             std::size_t rem = flat;
             for (std::size_t i = 0; i < n; ++i) {
-                result[i] = rem / ctx.strides_vec[i];
+                const std::size_t idx = rem / ctx.strides_vec[i];
+                if (idx > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                    throw std::overflow_error("multi_index: index exceeds int range");
+                }
+                result[i] = static_cast<int>(idx);
                 rem %= ctx.strides_vec[i];
             }
             return result;
@@ -2732,6 +2740,61 @@ public:
         }
     }
 
+    struct InnermostSlice {
+        std::vector<int> outer_index;
+        std::shared_ptr<DataFrame> dataframe;
+    };
+
+    // innermost_slices: return one slice per outer multi-index prefix,
+    // keeping the last index dimension free.
+    // outer_index stores zero-based ordinals for the fixed outer dimensions.
+    std::vector<InnermostSlice> innermost_slices() const {
+        std::vector<InnermostSlice> result;
+        if (index_dims_.empty()) {
+            InnermostSlice slice;
+            slice.dataframe = copy();
+            result.push_back(slice);
+            return result;
+        }
+
+        const std::size_t n = index_dims_.size();
+        if (n == 1) {
+            InnermostSlice slice;
+            slice.dataframe = copy();
+            result.push_back(slice);
+            return result;
+        }
+
+        const MultiIndexCtx& mi_ctx = get_mi_ctx();
+        std::vector<int> prev_prefix;
+        bool has_prev = false;
+
+        for (std::size_t r = 0; r < num_rows(); ++r) {
+            std::vector<int> mi = multi_index_at(r, mi_ctx);
+            std::vector<int> prefix(mi.begin(), mi.end() - 1);
+            if (has_prev && prefix == prev_prefix) {
+                continue;
+            }
+
+            std::vector<std::vector<int>> selectors;
+            selectors.reserve(n);
+            for (std::size_t i = 0; i + 1 < n; ++i) {
+                std::vector<int> selector(1, prefix[i]);
+                selectors.push_back(selector);
+            }
+            selectors.push_back(std::vector<int>());
+
+            InnermostSlice slice;
+            slice.outer_index = prefix;
+            slice.dataframe = loc(selectors);
+            result.push_back(slice);
+            prev_prefix = prefix;
+            has_prev = true;
+        }
+
+        return result;
+    }
+
     bool has_parent() const { return !parent_.expired(); }
 
     std::shared_ptr<const DataFrame> parent() const { return parent_.lock(); }
@@ -2786,7 +2849,7 @@ public:
         if (data.size() != n)
             throw std::invalid_argument(
                 "Expected " + std::to_string(n) + " elements, got " + std::to_string(data.size()));
-        auto& flat = get_column_as<T>(name);
+        auto& flat = get_col(name).as<T>();
         std::copy(data.begin(), data.end(), flat.begin() + row * n);
     }
 
@@ -2803,7 +2866,7 @@ public:
         if (data.size() != mrows)
             throw std::invalid_argument(
                 "Expected " + std::to_string(mrows) + " matrix rows, got " + std::to_string(data.size()));
-        auto& flat = get_column_as<T>(name);
+        auto& flat = get_col(name).as<T>();
         std::size_t base = row * mrows * mcols;
         for (std::size_t i = 0; i < mrows; ++i) {
             if (data[i].size() != mcols)
@@ -3107,7 +3170,7 @@ private:
                     val = take_max ? std::max(val, col.as<int>()[rows[i]])
                                    : std::min(val, col.as<int>()[rows[i]]);
                 out.push_back(val);
-                return make_column<int>(out);
+                return *make_column<int>(out);
             } else if (col.tag == DType::Complex) {
                 using C = std::complex<double>;
                 const auto& data = col.as<C>();
@@ -3120,7 +3183,7 @@ private:
                         best = m;
                     }
                 }
-                return make_column<C>({val});
+                return *make_column<C>({val});
             } else { // Double
                 std::vector<double> out;
                 double val = col.as<double>()[rows[0]];
@@ -3128,7 +3191,7 @@ private:
                     val = take_max ? std::max(val, col.as<double>()[rows[i]])
                                    : std::min(val, col.as<double>()[rows[i]]);
                 out.push_back(val);
-                return make_column<double>(out);
+                return *make_column<double>(out);
             }
         }
 
@@ -3145,7 +3208,7 @@ private:
                     int v = col.as<int>()[rows[i] * elem_size + k];
                     acc[k] = take_max ? std::max(acc[k], v) : std::min(acc[k], v);
                 }
-            Column c = make_column<int>(acc);
+            Column c = *make_column<int>(acc);
             c.shape = col.shape; return c;
         } else {
             std::vector<double> acc(elem_size);
@@ -3156,7 +3219,7 @@ private:
                 for (std::size_t k = 0; k < elem_size; ++k)
                     acc[k] = take_max ? std::max(acc[k], base[k]) : std::min(acc[k], base[k]);
             }
-            Column c = make_column<double>(acc);
+            Column c = *make_column<double>(acc);
             c.shape = col.shape; return c;
         }
     }
@@ -3170,23 +3233,23 @@ private:
             case DType::Int: {
                 auto va = a.as<int>(); const auto& vb = b.as<int>();
                 va.insert(va.end(), vb.begin(), vb.end());
-                c = make_column<int>(va); break;
+                c = *make_column<int>(va); break;
             }
             case DType::Double: {
                 auto va = a.as<double>(); const auto& vb = b.as<double>();
                 va.insert(va.end(), vb.begin(), vb.end());
-                c = make_column<double>(va); break;
+                c = *make_column<double>(va); break;
             }
             case DType::Complex: {
                 using C = std::complex<double>;
                 auto va = a.as<C>(); const auto& vb = b.as<C>();
                 va.insert(va.end(), vb.begin(), vb.end());
-                c = make_column<C>(va); break;
+                c = *make_column<C>(va); break;
             }
             case DType::String: {
                 auto va = a.as<std::string>(); const auto& vb = b.as<std::string>();
                 va.insert(va.end(), vb.begin(), vb.end());
-                c = make_column<std::string>(va); break;
+                c = *make_column<std::string>(va); break;
             }
         }
         c.quantity = a.quantity; c.shape = a.shape;

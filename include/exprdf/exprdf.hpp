@@ -22,6 +22,7 @@
 #include <memory>
 #include <iomanip>
 #include <fstream>
+#include <limits>
 namespace exprdf {
 
 // ============================================================

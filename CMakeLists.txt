@@ -56,6 +56,15 @@ if(EXPRDF_ENABLE_PYTHON AND Python3_FOUND)
             ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/test_pybind.py
     )
+
+    add_test(
+        NAME test_vs_plot_vs
+        COMMAND
+            ${CMAKE_COMMAND} -E env
+            EXPRDF_MODULE_DIR=$<TARGET_FILE_DIR:exprdf>
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/test_vs_plot_vs_permute.py
+    )
 endif()
 
 # Qt5 DataFrame widget library

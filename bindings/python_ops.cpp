@@ -1,13 +1,14 @@
 #include "python_ops.hpp"
 
-#include <exprdf/exprdf.hpp>
-#include <pybind11/numpy.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <complex>
 #include <limits>
 #include <stdexcept>
+
+#include <exprdf/exprdf.hpp>
+#include <pybind11/numpy.h>
 
 namespace exprdf {
 namespace pyops {
@@ -869,6 +870,244 @@ py::object op_zin(const py::args& args) {
     return py::cast(result);
 }
 
+// ---------------------------------------------------------------
+// vs / plot_vs -- attach an independent variable for (re-)plotting
+//
+// Mirror of ADS' vs() / plot_vs():
+//   vs(dependent, independent[, indepName]): plain data constructor.
+//     Builds a new dataset whose X axis (independent) is `independent`
+//     and whose data is the last column of `dependent`.
+//   plot_vs(dependent, independent): plot-directed remap.
+//     * If `independent` is one of `dependent`'s own independent (index)
+//       dimensions, the data is swapped so that dimension becomes the
+//       innermost (X-axis) dimension.  (e.g. S-param db(S11) with
+//       dependency [Cval, Freq] and plot_vs(dbS11, Cval) -> [Freq, Cval]).
+//     * If it is a dissimilar vector whose size matches an existing axis,
+//       that axis' values are spliced with `independent` and moved innermost
+//       (e.g. CvalH = Cval/2; plot_vs(dbS11, CvalH)).
+//     * Otherwise (same size as the whole dataset) it behaves like vs().
+// ---------------------------------------------------------------
+
+// Row permutation that re-orders rows so that index dims appear in
+// `target_order` (old dim ordinal indices) with row-major layout
+// (last dim = innermost / X axis).  Requires uniform (Cartesian) or
+// regular-grouped dims; ragged (irregular) dims are rejected.
+std::vector<std::size_t> permute_rows_to_dims_order(
+    const std::shared_ptr<DataFrame>& df,
+    const std::vector<std::size_t>& target_order) {
+    const std::size_t n = df->num_indices();
+    if (n == 0) return {};
+    if (target_order.size() != n)
+        throw std::invalid_argument("internal: dimension order size mismatch");
+
+    std::vector<std::size_t> lc(n); // level counts for stride math
+    for (std::size_t i = 0; i < n; ++i) {
+        const IndexDim& d = df->get_index_dim(i);
+        if (!d.is_uniform() && !d.is_regular_grouped())
+            throw std::invalid_argument(
+                "plot_vs: dimension permutation on a ragged index ('" + d.name +
+                "') is not supported");
+        lc[i] = d.level_count();
+        if (lc[i] == 0)
+            throw std::invalid_argument("plot_vs: zero-size index dimension");
+    }
+
+    const std::vector<std::size_t> old_strides = df->strides();
+    std::vector<std::size_t> new_strides(n); // strides in the new order
+    new_strides[n - 1] = 1;
+    for (std::size_t j = n - 1; j > 0; --j)
+        new_strides[j - 1] = new_strides[j] * lc[target_order[j]];
+
+    const std::size_t N = df->num_rows();
+    std::vector<std::size_t> new_to_old(N);
+    for (std::size_t nf = 0; nf < N; ++nf) {
+        std::size_t rem = nf, of = 0;
+        for (std::size_t j = 0; j < n; ++j) {
+            const std::size_t ord = rem / new_strides[j];
+            rem %= new_strides[j];
+            of += ord * old_strides[target_order[j]];
+        }
+        new_to_old[nf] = of;
+    }
+    return new_to_old;
+}
+
+struct AxisSplice {
+    std::string old_name;   // column being replaced (an existing axis)
+    std::string new_name;   // its new name (the independent's column name)
+    std::unique_ptr<Column> values; // replacement column (full-length, original layout)
+};
+
+// Rebuild a DataFrame from `df` by gathering rows through `new_to_old` and
+// then promoting `new_dim_names` (in order) back to index dimensions.
+// Optional `splice` replaces one column (old_name) with new values (new_name).
+std::shared_ptr<DataFrame> rebuild_permuted(
+    const std::shared_ptr<DataFrame>& df,
+    const std::vector<std::size_t>& new_to_old,
+    const std::vector<std::string>& new_dim_names,
+    const AxisSplice* splice = nullptr) {
+    auto result = std::make_shared<DataFrame>();
+    for (const auto& cname : df->column_names()) {
+        if (splice && cname == splice->old_name) {
+            Column gathered = splice->values->gather(new_to_old);
+            result->add_column(splice->new_name,
+                               std::unique_ptr<Column>(new Column(std::move(gathered))));
+            continue;
+        }
+        Column src = df->get_column(cname).clone();
+        Column gathered = src.gather(new_to_old);
+        result->add_column(cname, std::unique_ptr<Column>(new Column(std::move(gathered))));
+    }
+    if (!new_dim_names.empty())
+        result->set_index(new_dim_names);
+    return result;
+}
+
+// Broadcast an independent column's scalar values onto the full row count,
+// repeating them along the given axis dimension.  Result is a scalar column
+// of num_rows() elements in the ORIGINAL layout (caller gathers afterwards).
+std::unique_ptr<Column> scatter_axis_values(
+    const std::shared_ptr<DataFrame>& df,
+    std::size_t axis_dim,
+    const Column& indep_col) {
+    if (!indep_col.shape.empty())
+        throw std::invalid_argument("plot_vs: independent values must be a scalar column");
+    const std::size_t L = df->get_index_dim(axis_dim).level_count();
+    if (indep_col.num_rows() != L)
+        throw std::invalid_argument(
+            "plot_vs: independent row count (" + std::to_string(indep_col.num_rows()) +
+            ") does not match axis dimension size (" + std::to_string(L) + ")");
+    const std::size_t N = df->num_rows();
+    const std::vector<std::size_t> strides = df->strides();
+    const std::size_t stride = strides[axis_dim];
+
+    if (indep_col.tag == DType::String) {
+        const auto& vals = indep_col.as<std::string>();
+        std::vector<std::string> out(N);
+        for (std::size_t r = 0; r < N; ++r) out[r] = vals[(r / stride) % L];
+        auto c = make_column<std::string>(out);
+        c->quantity = indep_col.quantity;
+        return c;
+    }
+    if (indep_col.tag == DType::Complex) {
+        const auto& vals = indep_col.as<DComplex>();
+        std::vector<DComplex> out(N);
+        for (std::size_t r = 0; r < N; ++r) out[r] = vals[(r / stride) % L];
+        auto c = make_column<DComplex>(out);
+        c->quantity = indep_col.quantity;
+        return c;
+    }
+    // int / double -> promote to double
+    std::vector<double> vals = to_double_vec(indep_col);
+    std::vector<double> out(N);
+    for (std::size_t r = 0; r < N; ++r) out[r] = vals[(r / stride) % L];
+    auto c = make_column<double>(out);
+    c->quantity = indep_col.quantity;
+    return c;
+}
+
+// Fresh attach (vs() semantics): new dataset with `independent` as the sole
+// index dimension and the dependent's last column as the data.
+std::shared_ptr<DataFrame> attach_independent(
+    const std::shared_ptr<DataFrame>& dependent,
+    const std::shared_ptr<DataFrame>& independent,
+    const std::string& name_override) {
+    dependent->ensure_has_columns("vs/plot_vs: dependent DataFrame");
+    independent->ensure_has_columns("vs/plot_vs: independent DataFrame");
+
+    const std::string indep_src_name = independent->last_column_name();
+    const std::string indep_name = name_override.empty() ? indep_src_name : name_override;
+    const Column& indep_col = independent->get_column(indep_src_name);
+    if (!indep_col.shape.empty())
+        throw std::invalid_argument(
+            "vs/plot_vs: independent values must be a scalar column (got a list/matrix column)");
+    if (indep_col.num_rows() == 0)
+        throw std::invalid_argument("vs/plot_vs: independent values cannot be empty");
+    if (dependent->num_rows() != indep_col.num_rows())
+        throw std::invalid_argument(
+            "vs/plot_vs: row count mismatch: dependent has " +
+            std::to_string(dependent->num_rows()) +
+            " rows, independent has " + std::to_string(indep_col.num_rows()) + " rows");
+
+    auto result = std::make_shared<DataFrame>();
+    result->add_uniform_index_column(indep_name,
+        std::unique_ptr<Column>(new Column(indep_col.clone())), indep_col.quantity);
+
+    const std::string dep_name = dependent->last_column_name();
+    const Column& dep_col = dependent->get_column(dep_name);
+    result->add_column(dep_name, std::unique_ptr<Column>(new Column(dep_col.clone())));
+    return result;
+}
+
+py::object op_vs(const py::args& args) {
+    std::shared_ptr<DataFrame> dependent = require_df_arg(args, 0);
+    std::shared_ptr<DataFrame> independent = require_df_arg(args, 1);
+    std::string name_override;
+    if (args.size() >= 3) name_override = args[2].cast<std::string>();
+    return py::cast(attach_independent(dependent, independent, name_override));
+}
+
+py::object op_plot_vs(const py::args& args) {
+    std::shared_ptr<DataFrame> dependent = require_df_arg(args, 0);
+    std::shared_ptr<DataFrame> independent = require_df_arg(args, 1);
+    dependent->ensure_has_columns("plot_vs: dependent DataFrame");
+    independent->ensure_has_columns("plot_vs: independent DataFrame");
+
+    const std::string indep_name = independent->last_column_name();
+    std::vector<std::string> dnames = dependent->index_names();
+    const std::size_t n = dnames.size();
+
+    // Case A: `independent` is one of dependent's own independent dimensions.
+    // Swap/slice so that it becomes the innermost (X-axis) dimension.
+    for (std::size_t t = 0; t < n; ++t) {
+        if (dnames[t] != indep_name) continue;
+        std::vector<std::size_t> order;
+        std::vector<std::string> new_names;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i == t) continue;
+            order.push_back(i);
+            new_names.push_back(dnames[i]);
+        }
+        order.push_back(t);
+        new_names.push_back(indep_name);
+        std::vector<std::size_t> perm = permute_rows_to_dims_order(dependent, order);
+        return py::cast(rebuild_permuted(dependent, perm, new_names));
+    }
+
+    // Case B: independent is dissimilar to dependent's own independents.
+    //   a) Its size matches an existing axis -> splice values onto that axis.
+    //   b) Its size matches the whole dataset -> fresh attach like vs().
+    const std::size_t indep_rows = independent->num_rows();
+    std::size_t axis = n; // sentinel: not found
+    for (std::size_t i = 0; i < n && axis == n; ++i) {
+        const IndexDim& d = dependent->get_index_dim(i);
+        if (d.level_count() == indep_rows) axis = i;
+    }
+    if (axis != n) {
+        const std::string axis_name = dependent->get_index_dim(axis).name;
+        const Column& indep_col = independent->get_column(indep_name);
+
+        std::vector<std::size_t> order;
+        std::vector<std::string> new_names;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i == axis) continue;
+            order.push_back(i);
+            new_names.push_back(dnames[i]);
+        }
+        order.push_back(axis);
+        new_names.push_back(indep_name);
+
+        std::vector<std::size_t> perm = permute_rows_to_dims_order(dependent, order);
+        AxisSplice splice;
+        splice.old_name = axis_name;
+        splice.new_name = indep_name;
+        splice.values = scatter_axis_values(dependent, axis, indep_col);
+        return py::cast(rebuild_permuted(dependent, perm, new_names, &splice));
+    }
+
+    return py::cast(attach_independent(dependent, independent, ""));
+}
+
 const std::vector<OpSpec>& all_ops() {
     static const std::vector<OpSpec> specs = {
         make_internal_op("add", {{ArgType::DataFrame, "df"}, {ArgType::Any, "rhs"}}, 2, 2, &op_add, "internal add"),
@@ -896,7 +1135,17 @@ const std::vector<OpSpec>& all_ops() {
         make_export_op_df_first("ln", {}, 1, 1, &op_ln, "ln(df): natural log on last column"),
         make_export_op_df_first("log10", {}, 1, 1, &op_log10, "log10(df): base-10 log on last column"),
         make_export_op_df_first("conj", {}, 1, 1, &op_conj, "conj(df): conjugate on last column"),
-        make_export_op_df_first("zin", {{ArgType::Complex, "z0"}}, 1, 2, &op_zin, "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last column")
+        make_export_op_df_first("zin", {{ArgType::Complex, "z0"}}, 1, 2, &op_zin, "zin(df, z0=50): input impedance Zin = Z0*(1+S11)/(1-S11) on last column"),
+        make_op("vs",
+            {{ArgType::DataFrame, "dependent"}, {ArgType::DataFrame, "independent"}, {ArgType::String, "indepName"}},
+            2, 3, &op_vs,
+            "vs(dependent, independent[, indepName]): build a new dataset where 'independent' is the independent (X-axis) and the last column of 'dependent' is the data",
+            true, ModuleBindMode::DataFrameFirstArgs),
+        make_op("plot_vs",
+            {{ArgType::DataFrame, "dependent"}, {ArgType::DataFrame, "independent"}},
+            2, 2, &op_plot_vs,
+            "plot_vs(dependent, independent): returns a new dataset re-oriented so that 'independent' (an existing index of 'dependent', a vector matching one axis size, or a full-size vector) is the innermost (X-axis) independent. Change of plot direction with a dissimilar vector uses the values of the argument as the new axis values.",
+            true, ModuleBindMode::DataFrameFirstArgs)
     };
     return specs;
 }
